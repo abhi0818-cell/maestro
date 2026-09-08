@@ -895,6 +895,24 @@ Deno.serve(async (req: Request) => {
           { onConflict: 'match_id,raw_name,field,batter_name', ignoreDuplicates: true },
         )
       }
+      // Flag any bowler on 3+ wickets this innings for Review → 🎩 Potential
+      // Hat-tricks — none of our sources report ball-by-ball sequencing, so
+      // this is only ever a candidate for an admin to confirm/decline after
+      // checking the real scorecard. Same idempotent-upsert shape as
+      // scraper_fielding_issues just above.
+      const hattrickCandidates = statRows.filter(r => (r.bowling?.wickets ?? 0) >= 3)
+      if (hattrickCandidates.length) {
+        await sb.from('potential_hattricks').upsert(
+          hattrickCandidates.map(r => ({
+            tournament_id: match.tournament_id,
+            match_id     : match.id,
+            player_id    : r.player_id,
+            wickets      : r.bowling!.wickets,
+            source       : 'cricapi',
+          })),
+          { onConflict: 'match_id,player_id', ignoreDuplicates: true },
+        )
+      }
 
       // ── 7. Cascade to Daily + Season Long scores ────────────────────────
       const pointsMap = new Map<string, number>()

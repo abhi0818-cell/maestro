@@ -52,7 +52,7 @@ export const DEFAULT_RULES = {
     thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
     sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -2,
     wicket: 25, lbw_bowled_bonus: 8, maiden_over: 12, dot_ball: 1,
-    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
+    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16, hattrick_bonus: 16,
     economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
@@ -62,7 +62,7 @@ export const DEFAULT_RULES = {
     half_century: 4, century: 8, duck: -3,
     sr_above_140: 6, sr_120_to_140: 2, sr_below_50: -6, sr_50_to_75: -2,
     wicket: 25, lbw_bowled_bonus: 8, maiden_over: 4, dot_ball: 0.5,
-    four_wicket_haul: 4, five_wicket_haul: 8,
+    four_wicket_haul: 4, five_wicket_haul: 8, hattrick_bonus: 16,
     economy_below_2_5: 6, economy_2_5_to_3_5: 4, economy_7_to_8: -4, economy_above_9: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
@@ -70,7 +70,7 @@ export const DEFAULT_RULES = {
   TEST: {
     run: 1, boundary4: 0, boundary6: 0,
     half_century: 4, century: 8, duck: -4,
-    wicket: 16, lbw_bowled_bonus: 8, maiden_over: 4, five_wicket_haul: 8,
+    wicket: 16, lbw_bowled_bonus: 8, maiden_over: 4, five_wicket_haul: 8, hattrick_bonus: 16,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
   },
@@ -309,13 +309,13 @@ function strikeRateBonus(sr, format, r) {
 }
 
 /**
- * @param {{ wickets?: number, wicketTypes?: string[], maidens?: number, runsConceded?: number, ballsBowled?: number, dotBalls?: number, noBalls?: number, wides?: number }} spell
+ * @param {{ wickets?: number, wicketTypes?: string[], maidens?: number, runsConceded?: number, ballsBowled?: number, dotBalls?: number, noBalls?: number, wides?: number, hattrick?: boolean }} spell
  * @param {'T20'|'ODI'|'TEST'} format
  * @param {object} rules
  * @returns {{ points: number, breakdown: object }}
  */
 export function calcBowlingPoints(spell, format, rules) {
-  const { wickets = 0, wicketTypes = [], maidens = 0, runsConceded = 0, ballsBowled = 0, dotBalls = 0, noBalls = 0, wides = 0 } = spell || {};
+  const { wickets = 0, wicketTypes = [], maidens = 0, runsConceded = 0, ballsBowled = 0, dotBalls = 0, noBalls = 0, wides = 0, hattrick = false } = spell || {};
   const b = {};
 
   b.wickets = wickets * (rules.wicket ?? 0);
@@ -328,6 +328,14 @@ export function calcBowlingPoints(spell, format, rules) {
   if (wickets >= 5 && rules.five_wicket_haul) b.fiveWicket = rules.five_wicket_haul;
   else if (wickets >= 4 && rules.four_wicket_haul) b.fourWicket = rules.four_wicket_haul;
   else if (wickets >= 3 && rules.three_wicket_haul) b.threeWicket = rules.three_wicket_haul;
+
+  // Hat-trick bonus — 3 wickets in 3 consecutive deliveries, independent of
+  // the wicket-haul tiers above (which key off total wickets in the innings),
+  // so it stacks with whichever haul bonus applies. Never auto-detected: none
+  // of our data sources reliably expose ball-by-ball sequencing, so `hattrick`
+  // is only ever set true after an admin confirms it via the Review tab's
+  // Potential Hat-tricks queue (see db.js confirmHattrick).
+  if (hattrick && rules.hattrick_bonus) b.hattrick = rules.hattrick_bonus;
 
   b.maidens = maidens * (rules.maiden_over ?? 0);
   b.dotBalls = dotBalls * (rules.dot_ball ?? 0);

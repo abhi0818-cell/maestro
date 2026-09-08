@@ -2304,6 +2304,148 @@ export function createDb(cfg = {}) {
       if (error) throw error;
     },
 
+    // ── Potential Hat-tricks (Review → 🎩) ──────────────────────────────────
+    // None of our data sources (CricAPI, scraper, pasted scorecards) reliably
+    // report ball-by-ball sequencing, so a genuine hat-trick (3 wickets on 3
+    // consecutive deliveries) can never be auto-detected — only a bowler's
+    // total wickets in the innings. Whenever that reaches 3+, a candidate row
+    // is queued here (same shape/lifecycle as scraper_fielding_issues) for an
+    // admin to confirm or decline after checking the real scorecard.
+
+    async getHattrickReviewCounts(tournamentIds) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('potential_hattricks')
+        .select('tournament_id')
+        .in('tournament_id', tournamentIds)
+        .is('resolved_at', null);
+      if (error) throw error;
+      const counts = new Map();
+      for (const id of tournamentIds) counts.set(id, 0);
+      for (const row of data ?? []) {
+        counts.set(row.tournament_id, (counts.get(row.tournament_id) ?? 0) + 1);
+      }
+      return counts;
+    },
+
+    /** All unresolved potential hat-tricks for a tournament, with match + player context. */
+    async getHattrickReview(tournamentId) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('potential_hattricks')
+        .select(`
+          id, tournament_id, match_id, player_id, wickets, source, created_at,
+          match:matches!match_id(
+            match_number, format,
+            home_team:teams!home_team_id(name),
+            away_team:teams!away_team_id(name)
+          ),
+          player:players!player_id(name, team_id)
+        `)
+        .eq('tournament_id', tournamentId)
+        .is('resolved_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? []).map(h => ({
+        id           : h.id,
+        tournamentId : h.tournament_id,
+        matchId      : h.match_id,
+        playerId     : h.player_id,
+        playerName   : h.player?.name ?? h.player_id,
+        playerTeam   : h.player?.team_id ?? '',
+        wickets      : h.wickets,
+        source       : h.source,
+        createdAt    : h.created_at,
+        matchFormat  : h.match?.format || 'T20',
+        matchLabel: h.match
+          ? `M${h.match.match_number} · ${h.match.home_team?.name ?? '?'} vs ${h.match.away_team?.name ?? '?'}`
+          : h.match_id,
+      }));
+    },
+
+    /**
+     * Persist candidate hat-tricks (bowlers on 3+ wickets this match) into
+     * the Review → 🎩 Potential Hat-tricks queue. Used by finalizeOneMatch
+     * and saveManualScorecardForMatch (admin.js) for the CricAPI-manual and
+     * pasted-scorecard paths; the cron paths (poll-cricapi/scrape-scorecard)
+     * write here directly, mirroring insertFieldingIssues above.
+     *
+     * `candidates` is an array of { playerId, wickets }. One row per (match,
+     * player) — the UNIQUE constraint plus ignoreDuplicates means re-running
+     * finalize on the same match is a no-op for rows already queued (or
+     * already resolved, since this upsert never touches resolved_at).
+     */
+    async insertPotentialHattricks(tournamentId, matchId, candidates, source) {
+      if (!tournamentId || !matchId || !candidates?.length) return;
+      const sb = await getClient();
+      const rows = candidates
+        .filter(c => c.playerId && (c.wickets ?? 0) >= 3)
+        .map(c => ({
+          tournament_id: tournamentId,
+          match_id     : matchId,
+          player_id    : c.playerId,
+          wickets      : c.wickets,
+          source,
+        }));
+      if (!rows.length) return;
+      const { error } = await sb.from('potential_hattricks').upsert(
+        rows, { onConflict: 'match_id,player_id', ignoreDuplicates: true },
+      );
+      if (error) throw error;
+    },
+
+    /**
+     * Confirm a queued candidate as a genuine hat-trick: patches that
+     * player's player_match_stats for the match (bowling.hattrick = true,
+     * raw_points += bonusPoints — the caller resolves bonusPoints from that
+     * match's effective rules via resolveEffectiveRules, same convention
+     * resolveFieldingIssueAsCredit's callers already use for fieldingPoints),
+     * then marks the queue row resolved. Tags the stats row
+     * source='scraper_manual' — the same guard finalizeOneMatch's
+     * manuallyCorrectedIds already relies on for fielding-credit fixes — so
+     * a later re-finalize never silently strips the bonus back out.
+     */
+    async confirmHattrick(hattrick, bonusPoints) {
+      const sb = await getClient();
+      const { data: existing, error: fe } = await sb
+        .from('player_match_stats')
+        .select('batting, bowling, fielding, raw_points')
+        .eq('match_id', hattrick.matchId).eq('player_id', hattrick.playerId)
+        .maybeSingle();
+      if (fe) throw fe;
+
+      const bowling = { ...(existing?.bowling ?? {}), hattrick: true };
+      const patch = {
+        match_id  : hattrick.matchId,
+        player_id : hattrick.playerId,
+        batting   : existing?.batting ?? null,
+        bowling,
+        fielding  : existing?.fielding ?? null,
+        raw_points: (Number(existing?.raw_points) || 0) + (Number(bonusPoints) || 0),
+        source    : 'scraper_manual',
+      };
+      const { error: ue } = await sb
+        .from('player_match_stats')
+        .upsert(patch, { onConflict: 'match_id,player_id' });
+      if (ue) throw ue;
+
+      const { error: re } = await sb
+        .from('potential_hattricks')
+        .update({ resolved_at: new Date().toISOString(), resolved_by: 'confirmed' })
+        .eq('id', hattrick.id);
+      if (re) throw re;
+    },
+
+    /** Dismiss a queued candidate — the 3+ wicket haul was real, just not an actual hat-trick. */
+    async declineHattrick(id) {
+      const sb = await getClient();
+      const { error } = await sb
+        .from('potential_hattricks')
+        .update({ resolved_at: new Date().toISOString(), resolved_by: 'declined' })
+        .eq('id', id);
+      if (error) throw error;
+    },
+
     /**
      * Persist unmatched batter/bowler identities into the same
      * scraper_unmatched queue the scraper/poll-cricapi cron jobs write to —

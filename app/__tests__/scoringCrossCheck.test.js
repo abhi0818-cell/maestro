@@ -49,6 +49,9 @@ const BOWLING_CASES = [
   { label: 'T20 4-wkt haul',             spell: { wickets: 4, wicketTypes: [], maidens: 0, runsConceded: 25, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 } },
   { label: 'T20 3-wkt haul',             spell: { wickets: 3, wicketTypes: [], maidens: 0, runsConceded: 20, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 } },
   { label: 'T20 2 wickets — no haul bonus', spell: { wickets: 2, wicketTypes: [], maidens: 0, runsConceded: 20, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 } },
+  { label: 'confirmed hat-trick, 3-wkt haul stacks', spell: { wickets: 3, wicketTypes: [], maidens: 0, runsConceded: 20, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0, hattrick: true } },
+  { label: 'confirmed hat-trick, 5-wkt haul stacks', spell: { wickets: 5, wicketTypes: [], maidens: 0, runsConceded: 30, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0, hattrick: true }, fmt: 'ODI' },
+  { label: '3+ wickets, hattrick not yet confirmed', spell: { wickets: 3, wicketTypes: [], maidens: 0, runsConceded: 20, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0, hattrick: false } },
   { label: '≤ 6 balls: no eco bonus',    spell: { wickets: 1, wicketTypes: [], maidens: 0, runsConceded: 4, ballsBowled: 6, dotBalls: 2, noBalls: 0, wides: 0 } },
 ];
 
@@ -109,7 +112,7 @@ describe('calcBowling — web vs mobile identical', () => {
       const w = web.calcBowling(spell, fmt);
       const m = mob.calcBowlingPoints(spell, fmt);
       assert.equal(w.points, m.points, `points: web=${w.points} mob=${m.points}`);
-      for (const key of ['wickets','lbwBowledBonus','maidens','dotBalls','economyBonus','noBalls','wides','fiveWicket','fourWicket','threeWicket']) {
+      for (const key of ['wickets','lbwBowledBonus','maidens','dotBalls','economyBonus','noBalls','wides','fiveWicket','fourWicket','threeWicket','hattrick']) {
         const wv = w.breakdown[key] ?? 0;
         const mv = m.breakdown[key] ?? 0;
         assert.equal(wv, mv, `breakdown.${key}: web=${wv} mob=${mv}`);

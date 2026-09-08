@@ -2484,18 +2484,18 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       T20: { run:1, boundary4:1, boundary6:2, thirty_run_bonus:4, half_century:8, century:16, duck:-2,
         sr_above_170:6, sr_140_to_170:4, sr_below_70:-6, sr_70_to_100:-2,
         wicket:25, lbw_bowled_bonus:8, maiden_over:12, dot_ball:1,
-        three_wicket_haul:8, four_wicket_haul:8, five_wicket_haul:16,
+        three_wicket_haul:8, four_wicket_haul:8, five_wicket_haul:16, hattrick_bonus:16,
         economy_below_5:6, economy_5_to_6:4, economy_10_to_11:-4, economy_above_11:-6,
         catch:8, stumping:12, run_out_direct:12, run_out_indirect:6,
         no_ball:-1, wide:-1 },
       ODI: { run:1, boundary4:1, boundary6:2, half_century:4, century:8, duck:-3,
         sr_above_140:6, sr_120_to_140:2, sr_below_50:-6, sr_50_to_75:-2,
-        wicket:25, lbw_bowled_bonus:8, maiden_over:4, dot_ball:0.5, four_wicket_haul:4, five_wicket_haul:8,
+        wicket:25, lbw_bowled_bonus:8, maiden_over:4, dot_ball:0.5, four_wicket_haul:4, five_wicket_haul:8, hattrick_bonus:16,
         economy_below_2_5:6, economy_2_5_to_3_5:4, economy_7_to_8:-4, economy_above_9:-6,
         catch:8, stumping:12, run_out_direct:12, run_out_indirect:6,
         no_ball:-1, wide:-1 },
       TEST:{ run:1, boundary4:0, boundary6:0, half_century:4, century:8, duck:-4,
-        wicket:16, lbw_bowled_bonus:8, maiden_over:4, five_wicket_haul:8,
+        wicket:16, lbw_bowled_bonus:8, maiden_over:4, five_wicket_haul:8, hattrick_bonus:16,
         catch:8, stumping:12, run_out_direct:12, run_out_indirect:6,
         no_ball:-1, wide:-1 },
     };
@@ -2540,6 +2540,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       three_wicket_haul:{ group:'Bowling',     label:'3-wicket haul' },
       four_wicket_haul: { group:'Bowling',     label:'4-wicket haul' },
       five_wicket_haul: { group:'Bowling',     label:'5-wicket haul' },
+      hattrick_bonus:   { group:'Bowling',     label:'Hat-trick bonus' },
       // Economy
       economy_below_5:   { group:'Economy',    label:'Eco < 5' },
       economy_5_to_6:    { group:'Economy',    label:'Eco 5–6' },
@@ -5419,6 +5420,21 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             <div class="fielding-issues-panel" data-tid="${t.id}"
                  style="display:none; margin-top:6px;"></div>
           </div>
+          <!-- Potential hat-tricks panel -->
+          <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+            <button class="hattrick-toggle" data-tid="${t.id}"
+                    style="display:flex; align-items:center; gap:6px; background:none; border:none;
+                           cursor:pointer; padding:0; width:100%; text-align:left;">
+              <span style="font-size:11px; color:var(--muted);">🎩 Potential Hat-tricks</span>
+              <span class="hattrick-badge" data-tid="${t.id}"
+                    style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
+                           background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
+              <span class="hattrick-chevron" data-tid="${t.id}"
+                    style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
+            </button>
+            <div class="hattrick-panel" data-tid="${t.id}"
+                 style="display:none; margin-top:6px;"></div>
+          </div>
           <!-- Recoverable placeholder-stat panel ("Player Not Found" etc.) -->
           <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
             <button class="placeholder-stats-toggle" data-tid="${t.id}"
@@ -5459,6 +5475,14 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             badge.style.display = count ? 'inline' : 'none';
           });
         }).catch(err => console.error('getFieldingIssuesCounts failed:', err));
+        state.db.getHattrickReviewCounts(tIds).then(counts => {
+          counts.forEach((count, tid) => {
+            const badge = list.querySelector(`.hattrick-badge[data-tid="${tid}"]`);
+            if (!badge) return;
+            badge.textContent = count;
+            badge.style.display = count ? 'inline' : 'none';
+          });
+        }).catch(err => console.error('getHattrickReviewCounts failed:', err));
         state.db.getPlaceholderStatsCounts(tIds).then(counts => {
           counts.forEach((count, tid) => {
             const badge = list.querySelector(`.placeholder-stats-badge[data-tid="${tid}"]`);
@@ -6072,6 +6096,130 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
               });
             });
 
+          } catch (err) {
+            panel.innerHTML = `<span style="font-size:11px;color:var(--bad);">Error: ${escapeHtml(err.message)}</span>`;
+            if (chevron) chevron.textContent = '▶ Retry';
+          }
+        });
+      });
+
+      // Wire potential-hattricks panels — a bowler on 3+ wickets this innings
+      // is only ever a *candidate*: none of our data sources report
+      // ball-by-ball sequencing, so an admin has to confirm or decline it by
+      // checking the real scorecard/highlights. Confirming applies the
+      // Hat-trick bonus (from that match's effective rules) to raw_points and
+      // re-runs the XI/SL score cascade, same as the Fielding Issues credit
+      // flow above.
+      list.querySelectorAll('.hattrick-toggle').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const tid     = btn.dataset.tid;
+          const panel   = list.querySelector(`.hattrick-panel[data-tid="${tid}"]`);
+          const chevron = list.querySelector(`.hattrick-chevron[data-tid="${tid}"]`);
+          const badge   = list.querySelector(`.hattrick-badge[data-tid="${tid}"]`);
+          if (!panel) return;
+
+          if (panel.style.display !== 'none') {
+            panel.style.display = 'none';
+            if (chevron) chevron.textContent = '▶ Load';
+            return;
+          }
+
+          if (chevron) chevron.textContent = '⏳';
+          panel.style.display = 'block';
+          panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">Loading…</span>';
+
+          try {
+            const [candidates, overrides] = await Promise.all([
+              state.db.getHattrickReview(tid),
+              state.db.getScoringRules(tid).catch(() => ({})),
+            ]);
+            const rulesFor = fmt => ({ ...DEFAULT_SCORING_RULES[fmt], ...(overrides?.[fmt] || {}) });
+
+            if (chevron) chevron.textContent = candidates.length ? '▼ Hide' : '▼';
+            if (badge) { badge.textContent = candidates.length; badge.style.display = candidates.length ? 'inline' : 'none'; }
+
+            if (!candidates.length) {
+              panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ No potential hat-tricks — nothing to review.</span>';
+              return;
+            }
+
+            panel.innerHTML = `
+              <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                <thead>
+                  <tr style="color:var(--muted); border-bottom:1px solid var(--border);">
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Bowler</th>
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Match</th>
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Wickets</th>
+                    <th style="padding:4px 6px; font-weight:600; min-width:200px;">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${candidates.map(h => `
+                    <tr class="ht-row" data-hid="${h.id}" data-matchid="${h.matchId}" data-fmt="${h.matchFormat}"
+                        style="border-bottom:1px solid var(--border);">
+                      <td style="padding:5px 6px; font-weight:600;">${escapeHtml(h.playerName)}
+                        <span style="color:var(--muted); font-weight:400;">(${escapeHtml(h.playerTeam)})</span></td>
+                      <td style="padding:5px 6px; color:var(--muted); font-size:10px;">${escapeHtml(h.matchLabel)}</td>
+                      <td style="padding:5px 6px; color:var(--muted);">${h.wickets}</td>
+                      <td style="padding:5px 6px;">
+                        <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+                          <button class="ht-confirm-btn"
+                                  style="font-size:10px; padding:2px 7px; border-radius:4px;
+                                         background:rgba(201,168,76,0.12); border:1px solid var(--accent);
+                                         color:var(--accent); cursor:pointer; white-space:nowrap;"
+                                  title="Confirm a genuine hat-trick (3 wickets in 3 consecutive deliveries)">
+                            ✓ Confirm hat-trick
+                          </button>
+                          <button class="ht-decline-btn"
+                                  style="font-size:10px; padding:2px 7px; border-radius:4px;
+                                         background:transparent; border:1px solid var(--border);
+                                         color:var(--muted); cursor:pointer; white-space:nowrap;">Not a hat-trick</button>
+                        </div>
+                      </td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>`;
+
+            panel.querySelectorAll('.ht-row').forEach(row => {
+              const hid     = row.dataset.hid;
+              const matchId = row.dataset.matchid;
+              const fmt     = row.dataset.fmt;
+              const cand    = candidates.find(x => x.id === hid);
+
+              row.querySelector('.ht-confirm-btn').addEventListener('click', async () => {
+                try {
+                  const rules       = rulesFor(fmt);
+                  const bonusPoints = rules.hattrick_bonus || 0;
+                  await state.db.confirmHattrick(cand, bonusPoints);
+                  // Cascade into every user team's totals for this match —
+                  // same reasoning as the Fielding Issues credit flow: a
+                  // completed match is never re-polled, so this is the only
+                  // way the bonus actually shows up anywhere besides raw stats.
+                  if (matchId) {
+                    try {
+                      await window.__admin?.computeAndSaveXIScoresForMatch?.(matchId);
+                      await window.__admin?.computeAndSaveSLScoresForMatch?.(matchId);
+                    } catch (e) { console.warn('rescore after hat-trick confirm failed', e); }
+                  }
+                  window.__admin?.renderFantasyScorecard?.();
+                  row.remove();
+                  const remaining = panel.querySelectorAll('.ht-row').length;
+                  if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
+                  if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All potential hat-tricks resolved.</span>';
+                  toast(`Hat-trick confirmed (+${bonusPoints} pts) — team scores updated.`);
+                } catch (err) { toast('Failed: ' + err.message); }
+              });
+
+              row.querySelector('.ht-decline-btn').addEventListener('click', async () => {
+                try {
+                  await state.db.declineHattrick(hid);
+                  row.remove();
+                  const remaining = panel.querySelectorAll('.ht-row').length;
+                  if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
+                  if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All potential hat-tricks resolved.</span>';
+                } catch (err) { toast('Failed: ' + err.message); }
+              });
+            });
           } catch (err) {
             panel.innerHTML = `<span style="font-size:11px;color:var(--bad);">Error: ${escapeHtml(err.message)}</span>`;
             if (chevron) chevron.textContent = '▶ Retry';
@@ -13965,6 +14113,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         if (bwr.breakdown.fiveWicket)       lines.push(['5-wicket haul bonus', bwr.breakdown.fiveWicket]);
         else if (bwr.breakdown.fourWicket)  lines.push(['4-wicket haul bonus', bwr.breakdown.fourWicket]);
         else if (bwr.breakdown.threeWicket) lines.push(['3-wicket haul bonus', bwr.breakdown.threeWicket]);
+        if (bwr.breakdown.hattrick)         lines.push(['Hat-trick bonus', bwr.breakdown.hattrick]);
         if (bwr.breakdown.maidens)          lines.push(['Maidens (' + (bowl.maidens||0) + ' × ' + rules.maiden_over + ')', bwr.breakdown.maidens]);
         if (bwr.breakdown.dotBalls)         lines.push(['Dot balls (' + (bowl.dotBalls||0) + ' × ' + (rules.dot_ball||0) + ')', bwr.breakdown.dotBalls]);
         if (bwr.breakdown.economyBonus)     lines.push(['Economy bonus', bwr.breakdown.economyBonus]);

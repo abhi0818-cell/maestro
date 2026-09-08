@@ -20,7 +20,7 @@ const DEFAULT_SCORING_RULES = {
     run: 1, boundary4: 1, boundary6: 2, thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
     sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -2,
     wicket: 25, lbw_bowled_bonus: 8, maiden_over: 12, dot_ball: 1,
-    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
+    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16, hattrick_bonus: 16,
     economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
@@ -29,14 +29,14 @@ const DEFAULT_SCORING_RULES = {
     run: 1, boundary4: 1, boundary6: 2, half_century: 4, century: 8, duck: -3,
     sr_above_140: 6, sr_120_to_140: 2, sr_below_50: -6, sr_50_to_75: -2,
     wicket: 25, lbw_bowled_bonus: 8, maiden_over: 4, dot_ball: 0.5,
-    four_wicket_haul: 4, five_wicket_haul: 8,
+    four_wicket_haul: 4, five_wicket_haul: 8, hattrick_bonus: 16,
     economy_below_2_5: 6, economy_2_5_to_3_5: 4, economy_7_to_8: -4, economy_above_9: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
   },
   TEST: {
     run: 1, boundary4: 0, boundary6: 0, half_century: 4, century: 8, duck: -4,
-    wicket: 16, lbw_bowled_bonus: 8, maiden_over: 4, five_wicket_haul: 8,
+    wicket: 16, lbw_bowled_bonus: 8, maiden_over: 4, five_wicket_haul: 8, hattrick_bonus: 16,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
   },
@@ -104,7 +104,7 @@ function calcBatting(inn, fmt = 'T20', rulesOverride) {
 
 function calcBowling(s, fmt = 'T20', rulesOverride) {
   const r = rulesOverride || DEFAULT_SCORING_RULES[fmt];
-  const { wickets = 0, wicketTypes = [], maidens = 0, runsConceded = 0, ballsBowled = 0, dotBalls = 0, noBalls = 0, wides = 0 } = s || {};
+  const { wickets = 0, wicketTypes = [], maidens = 0, runsConceded = 0, ballsBowled = 0, dotBalls = 0, noBalls = 0, wides = 0, hattrick = false } = s || {};
   const b = {};
   b.wickets = wickets * r.wicket;
   const prem = wicketTypes.filter(t => ['lbw', 'bowled'].includes(String(t).toLowerCase())).length;
@@ -112,6 +112,7 @@ function calcBowling(s, fmt = 'T20', rulesOverride) {
   if (wickets >= 5 && r.five_wicket_haul) b.fiveWicket = r.five_wicket_haul;
   else if (wickets >= 4 && r.four_wicket_haul) b.fourWicket = r.four_wicket_haul;
   else if (wickets >= 3 && r.three_wicket_haul) b.threeWicket = r.three_wicket_haul;
+  if (hattrick && r.hattrick_bonus) b.hattrick = r.hattrick_bonus;
   b.maidens  = maidens * r.maiden_over;
   b.dotBalls = dotBalls * (r.dot_ball || 0);
   b.economyBonus = ballsBowled > 6 ? ecoBonus(economyRate(runsConceded, ballsBowled), fmt, r) : 0;

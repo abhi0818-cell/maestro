@@ -1722,6 +1722,27 @@ Deno.serve(async (req: Request) => {
         if (fiErr) console.error(`[${match.id}] scraper_fielding_issues upsert failed:`, fiErr.message, JSON.stringify(fieldingIssues))
       }
 
+      // ── 9b-2. Flag any bowler on 3+ wickets this innings for Review →
+      // 🎩 Potential Hat-tricks — none of our sources report ball-by-ball
+      // sequencing, so this is only ever a candidate for an admin to
+      // confirm/decline after checking the real scorecard. source is
+      // hardcoded 'scraper' (not the cricketaddictor/business_standard
+      // `source` var above) to match player_match_stats' own convention.
+      const hattrickCandidates = statRows.filter(r => (r.bowling?.wickets ?? 0) >= 3)
+      if (hattrickCandidates.length) {
+        const { error: htErr } = await sb.from('potential_hattricks').upsert(
+          hattrickCandidates.map(r => ({
+            tournament_id: tournament.id,
+            match_id     : match.id,
+            player_id    : r.player_id,
+            wickets      : r.bowling!.wickets,
+            source       : 'scraper',
+          })),
+          { onConflict: 'match_id,player_id', ignoreDuplicates: true },
+        )
+        if (htErr) console.error(`[${match.id}] potential_hattricks upsert failed:`, htErr.message)
+      }
+
       // ── 9c. Let the scraper mark a match completed too ────────────────────
       // Previously only poll-cricapi (CricAPI-driven matches) could flip
       // matches.status to 'completed'. Scraper-only tournaments had no way to

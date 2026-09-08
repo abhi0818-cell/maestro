@@ -72,6 +72,7 @@ const BOWLING_ROWS: RuleRow[] = [
   { label: '3-wicket haul',       key: 'three_wicket_haul', unit: 'bonus' },
   { label: '4-wicket haul',       key: 'four_wicket_haul', unit: 'bonus' },
   { label: '5-wicket haul',       key: 'five_wicket_haul', unit: 'bonus' },
+  { label: 'Hat-trick bonus',      key: 'hattrick_bonus',   unit: 'bonus' },
   { label: 'Maiden over',         key: 'maiden_over',      unit: 'bonus' },
   { label: 'Dot ball',            key: 'dot_ball',         unit: 'per dot' },
   { label: 'Economy < 5',         key: 'economy_below_5',  unit: 'bonus' },
@@ -360,7 +361,7 @@ export default function RulesScreen() {
     thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
     sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -4,
     wicket: 25, maiden_over: 8, dot_ball: 0,
-    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
+    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16, hattrick_bonus: 16,
     economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
   };

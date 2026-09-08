@@ -25,7 +25,7 @@ export const SCORING_RULES: Record<MatchFormat, ScoringRuleSet> = {
     thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
     sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -2,
     wicket: 25, lbw_bowled_bonus: 8, maiden_over: 12, dot_ball: 1,
-    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
+    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16, hattrick_bonus: 16,
     economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
@@ -35,7 +35,7 @@ export const SCORING_RULES: Record<MatchFormat, ScoringRuleSet> = {
     half_century: 4, century: 8, duck: -3,
     sr_above_140: 6, sr_120_to_140: 2, sr_below_50: -6, sr_50_to_75: -2,
     wicket: 25, lbw_bowled_bonus: 8, maiden_over: 4, dot_ball: 0.5,
-    four_wicket_haul: 4, five_wicket_haul: 8,
+    four_wicket_haul: 4, five_wicket_haul: 8, hattrick_bonus: 16,
     economy_below_2_5: 6, economy_2_5_to_3_5: 4, economy_7_to_8: -4, economy_above_9: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
@@ -43,7 +43,7 @@ export const SCORING_RULES: Record<MatchFormat, ScoringRuleSet> = {
   TEST: {
     run: 1, boundary4: 0, boundary6: 0,
     half_century: 4, century: 8, duck: -4,
-    wicket: 16, lbw_bowled_bonus: 8, maiden_over: 4, five_wicket_haul: 8,
+    wicket: 16, lbw_bowled_bonus: 8, maiden_over: 4, five_wicket_haul: 8, hattrick_bonus: 16,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
   },
@@ -142,7 +142,7 @@ export function calcBowlingPoints(
   rulesOverride?: ScoringRuleSet,
 ): { points: number; breakdown: Record<string, number> } {
   const rules = rulesOverride ?? SCORING_RULES[format];
-  const { wickets, wicketTypes = [], maidens, runsConceded, ballsBowled, dotBalls, noBalls, wides } = spell;
+  const { wickets, wicketTypes = [], maidens, runsConceded, ballsBowled, dotBalls, noBalls, wides, hattrick } = spell;
   const breakdown: Record<string, number> = {};
 
   breakdown.wickets = wickets * rules.wicket;
@@ -155,6 +155,11 @@ export function calcBowlingPoints(
   if (wickets >= 5 && rules.five_wicket_haul) breakdown.fiveWicket = rules.five_wicket_haul;
   else if (wickets >= 4 && rules.four_wicket_haul) breakdown.fourWicket = rules.four_wicket_haul;
   else if (wickets >= 3 && rules.three_wicket_haul) breakdown.threeWicket = rules.three_wicket_haul;
+
+  // Hat-trick bonus — independent of the wicket-haul tiers above; stacks with
+  // whichever haul bonus applies. Only ever true after an admin confirms it
+  // via the web Review tab (see BowlingSpell.hattrick).
+  if (hattrick && rules.hattrick_bonus) breakdown.hattrick = rules.hattrick_bonus;
 
   breakdown.maidens  = (maidens  ?? 0) * rules.maiden_over;
   breakdown.dotBalls = (dotBalls ?? 0) * (rules.dot_ball ?? 0);

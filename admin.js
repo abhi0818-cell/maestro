@@ -2212,6 +2212,18 @@
           console.warn('[Manual scorecard] insertFieldingIssues failed (fielding issues still reported below, just not queued in Review):', fiErr.message);
         }
       }
+      // Same treatment as fielding issues above: flag any bowler on 3+
+      // wickets this innings for Review → 🎩 Potential Hat-tricks.
+      const hattrickCandidates = rows
+        .filter(r => (r.bowling?.wickets ?? 0) >= 3)
+        .map(r => ({ playerId: r.playerId, wickets: r.bowling.wickets }));
+      if (hattrickCandidates.length) {
+        try {
+          await state.db.insertPotentialHattricks(local.tournament_id, matchId, hattrickCandidates, 'manual');
+        } catch (htErr) {
+          console.warn('[Manual scorecard] insertPotentialHattricks failed (not queued in Review):', htErr.message);
+        }
+      }
 
       // Same treatment for unmatched batter/bowler *identities* (not just
       // fielding credit): without this, a manually pasted scorecard's
@@ -2805,6 +2817,21 @@
           await state.db.insertFieldingIssues(m.tournament_id, m.id, players.fieldingIssues, 'cricapi');
         } catch (fiErr) {
           console.warn('[Finalize] insertFieldingIssues failed (fielding issues still reported below, just not queued in Review):', fiErr.message);
+        }
+      }
+      // Flag any bowler on 3+ wickets this innings for Review → 🎩 Potential
+      // Hat-tricks — none of our sources report ball-by-ball sequencing, so
+      // this is only ever a candidate for an admin to confirm/decline after
+      // checking the real scorecard. Best-effort, same reasoning as the
+      // fielding-issues insert just above.
+      const hattrickCandidates = rows
+        .filter(r => (r.bowling?.wickets ?? 0) >= 3)
+        .map(r => ({ playerId: r.playerId, wickets: r.bowling.wickets }));
+      if (hattrickCandidates.length) {
+        try {
+          await state.db.insertPotentialHattricks(m.tournament_id, m.id, hattrickCandidates, 'cricapi');
+        } catch (htErr) {
+          console.warn('[Finalize] insertPotentialHattricks failed (not queued in Review):', htErr.message);
         }
       }
 

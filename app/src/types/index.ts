@@ -40,6 +40,11 @@ export interface BowlingSpell {
   dotBalls: number;
   noBalls: number;
   wides: number;
+  // Confirmed true only after an admin manually verifies a genuine hat-trick
+  // (3 wickets in 3 consecutive deliveries) via the web Review tab — never
+  // auto-detected, since none of our data sources reliably expose
+  // ball-by-ball sequencing. See scoringEngine.shared.js's calcBowlingPoints.
+  hattrick?: boolean;
 }
 
 export interface FieldingStats {
