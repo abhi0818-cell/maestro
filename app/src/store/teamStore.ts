@@ -212,7 +212,7 @@ interface TeamState {
   tournamentId:    string | null;
   currentMatchId:    string | null;
   currentMatchLabel: string | null;  // e.g. "M25 · MNY vs SO"
-  nextMatchTime:     string | null;  // ISO start_time of next match (for countdown)
+  nextMatchTime:     string | null;  // effective lock time of next match (lock_time ?? start_time, for countdown)
   isFirstMatch:      boolean;        // true until the first match of the season locks
 
   // True while Free Hit is the effective (staged-or-committed) booster for
@@ -441,7 +441,13 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 
       const nextMatch = findNextUnlockedMatch(candidateMatches ?? []);
       const currentMatchId:    string | null = nextMatch?.id ?? null;
-      const nextMatchTime:     string | null = nextMatch?.start_time ?? null;
+      // Countdown/lock-badge deadline must match the actual lock gate
+      // (isMatchLocked: lock_time ?? start_time), not start_time alone —
+      // otherwise a match whose lock_time was pushed forward (e.g. a
+      // schedule correction) still shows "Locked" on mobile once its
+      // stale start_time passes, even though the match is genuinely still
+      // editable. See matchLock.ts isMatchLocked().
+      const nextMatchTime:     string | null = nextMatch?.lock_time ?? nextMatch?.start_time ?? null;
       const currentMatchLabel: string | null = nextMatch
         ? `M${nextMatch.match_number ?? '?'} · ${nextMatch.home_team_id || '—'} vs ${nextMatch.away_team_id || '—'}`
         : null;

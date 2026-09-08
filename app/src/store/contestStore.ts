@@ -152,7 +152,7 @@ export const useContestStore = create<ContestState>((set) => ({
         // every match is already completed (e.g. the season has ended).
         supabase
           .from('matches')
-          .select('start_time')
+          .select('start_time, lock_time')
           .eq('tournament_id', tournamentId)
           .neq('status', 'completed')
           .order('match_number', { ascending: true })
@@ -161,7 +161,12 @@ export const useContestStore = create<ContestState>((set) => ({
 
       if (error) throw error;
 
-      const nextMatchTime = nextMatches?.[0]?.start_time ?? '2099-01-01T00:00:00Z';
+      // Prefer lock_time over start_time (mirrors isMatchLocked / teamStore's
+      // nextMatchTime) — otherwise a match whose lock_time was pushed forward
+      // independently of start_time (a schedule correction, a delay) shows
+      // the wrong deadline here even though the actual lock gate is correct.
+      const nextMatchTime =
+        nextMatches?.[0]?.lock_time ?? nextMatches?.[0]?.start_time ?? '2099-01-01T00:00:00Z';
 
       const mapped: RealContest[] = (data ?? []).map((c: any) => mapRealContest(c, nextMatchTime));
 
