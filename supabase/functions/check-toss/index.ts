@@ -12,28 +12,37 @@
  *      the all-clear signal, not just a silent DB write, so a confirmation
  *      is only persisted once that push has actually gone out (see the
  *      "Case 1" comment below for why).
- *   2. No toss from either source, AND we're within 15 minutes of start_time
- *      (i.e. start_time minus 15 minutes has passed) → matches.toss_status =
+ *   2. No toss from either source, AND we're within 10 minutes of start_time
+ *      (i.e. start_time minus 10 minutes has passed) → matches.toss_status =
  *      'delay_flagged', admin gets a push ('no toss yet, match looks delayed
  *      — review / push the start time'). If app_settings.toss_auto_push.enabled
  *      is true (off by default — see migration_v55), it ALSO auto-pushes
  *      lock_time forward and flips the match to 'delayed' instead of just
- *      notifying.
- *   3. No toss yet, and still more than 15 minutes to start_time →
+ *      notifying. As of 2026-09-08 this is deliberately notify-only: real
+ *      corroboration data (toss_source_reliability) shows Cricbuzz/
+ *      CricketAddictor reliably landing 25-30 min before start, so a T-10
+ *      flag is a genuine anomaly worth a manual look, not routine — and the
+ *      admin wants to review/push by hand for now rather than have it
+ *      pushed automatically. See the CORROBORATION_WINDOW_MINUTES-adjacent
+ *      section below for how to flip that on later if wanted.
+ *   3. No toss yet, and still more than 10 minutes to start_time →
  *      toss_status = 'pending', no action. Toss is typically in by T-30, so
- *      this is the normal state for the first half of the 30-minute window.
+ *      this is the normal state for the great majority of the 30-minute
+ *      window.
  *
- * Why the delay decision point is start_time MINUS 15 minutes, not 10 (and
- * not start_time itself): toss usually happens by ~T-30, not right at
- * start_time — flagging at T-10 left too little runway to actually act on
- * a delay (review it, decide, push lock_time) before kickoff. T-15 still
- * gives the toss a full 15-minute grace window past its usual timing before
- * calling it a delay, while preserving 15 real minutes to react. Separately,
- * lock-matches runs on its own independent 1-minute cron and locks squads
- * the moment start_time passes, regardless of toss_status — the two
- * functions aren't coupled, so flagging only at start_time itself would
- * leave no real buffer at all: both crons could tick the same minute, and a
- * delayed match could get locked before check-toss's own update lands.
+ * Why the delay decision point is start_time MINUS 10 minutes (2026-09-08,
+ * tightened from 15): toss has consistently landed by T-25..T-30 across
+ * every CPL 2026 match with real corroboration data (both Cricbuzz and
+ * CricketAddictor agree on that window — see toss_source_reliability) — a
+ * T-15 flag was leaving 15 minutes of "normal, nothing's wrong" time
+ * classified as if it might already be a delay. T-10 is close enough to
+ * kickoff that a flag here is a genuine signal, not noise, while still
+ * leaving 10 real minutes to review and manually push lock_time before
+ * lock-matches (its own independent 1-minute cron) locks squads the moment
+ * start_time passes — the two functions aren't coupled, so flagging only at
+ * start_time itself would leave no real buffer at all: both crons could
+ * tick the same minute, and a delayed match could get locked before
+ * check-toss's own update lands.
  *
  * Why "no toss by the decision point" is the delay signal (rather than
  * text-matching for words like "rain"/"delayed" in a source's status
@@ -135,10 +144,12 @@ const CHECK_WINDOW_MINUTES = 30
 // ...and "no toss yet" only counts as a delay signal once we're within this
 // many minutes of start_time (i.e. start_time - DELAY_DECISION_BUFFER_MINUTES
 // has passed) — see the file header for why this needs a real buffer before
-// start_time itself, not just start_time. Widened from 10 to 15 (2026-08-23):
-// toss is typically confirmed by ~T-30, so a T-10 flag left too little
-// runway to actually review and push the start time before kickoff.
-const DELAY_DECISION_BUFFER_MINUTES = 15
+// start_time itself, not just start_time. Widened from 10 to 15 (2026-08-23),
+// then tightened back to 10 (2026-09-08) once real corroboration data
+// (toss_source_reliability) showed toss consistently landing by T-25..T-30
+// in practice — the 15-minute buffer was flagging matches as "possible
+// delay" while still comfortably inside their normal reporting window.
+const DELAY_DECISION_BUFFER_MINUTES = 10
 
 // 2026-08-26: added after M17 exposed the gap directly — CricketAddictor
 // confirmed the toss, which immediately excluded the match from every future
@@ -1025,7 +1036,7 @@ Deno.serve(async (req) => {
       const update: Record<string, unknown> = { toss_status: 'delay_flagged', toss_checked_at: nowISO }
 
       if (shouldNotify) {
-        // Positive = still before start_time (we're inside the 15-minute
+        // Positive = still before start_time (we're inside the 10-minute
         // decision buffer); negative = start_time has also passed.
         const minutesToStart = Math.round((startMs - nowMs) / 60000)
         const timingText = minutesToStart >= 0
