@@ -930,9 +930,20 @@ Deno.serve(async (req) => {
 
       // ── Source 3: Cricbuzz ───────────────────────────────────────────────
       let cricbuzzToss: TossResult | null = null
+      // Cricbuzz's own state for this match ('Preview' | 'Toss' | 'In
+      // Progress' | 'Complete' | etc.), captured regardless of whether a
+      // toss was parsed out of it. Unused for the toss decision itself —
+      // only read later at the delay-flag decision point (Case 2/3 below)
+      // to tell a genuine "nothing's happened yet" delay apart from a
+      // pipeline miss where the match has already moved on without us
+      // ever capturing its toss. null when Cricbuzz isn't tracking this
+      // fixture at all (findCricbuzzMatch found no match, or the listing
+      // fetch itself failed).
+      let cricbuzzState: string | null = null
       try {
         const cbMatches = await getCricbuzzMatches(cricbuzzCache)
         const cbInfo = findCricbuzzMatch(cbMatches, homeTeam, awayTeam, match.start_time)
+        cricbuzzState = cbInfo?.state ?? null
         cricbuzzToss = parseCricbuzzToss(cbInfo, homeTeam, awayTeam)
         // Hardening (2026-09-01, M22): the transient state==='Toss' text
         // above can miss a perfectly on-time toss outright — see
@@ -1030,6 +1041,11 @@ Deno.serve(async (req) => {
       }
 
       summary.delayFlagged++
+      // Logged every tick a match sits in delay_flagged, not just when a push
+      // actually goes out (shouldNotify below throttles the push, not this) —
+      // cheap observability for exactly the "was this a real delay or a
+      // pipeline miss" question, without needing a schema change to persist it.
+      console.log(`[check-toss] M${match.match_number} delay_flagged, cricbuzzState=${cricbuzzState ?? 'null'}`)
       const lastNotifiedMs = match.toss_delay_notified_at ? new Date(match.toss_delay_notified_at).getTime() : null
       const shouldNotify = lastNotifiedMs === null || (nowMs - lastNotifiedMs) >= autoPush.renotify_minutes * 60 * 1000
 
@@ -1044,14 +1060,39 @@ Deno.serve(async (req) => {
           : `started ${Math.abs(minutesToStart)}m ago`
         const reasonText = delayText ? ` (source reports: "${delayText}")` : ''
 
+        // 2026-09-08: both real delay_flagged incidents on record so far
+        // (CPL M10, M22) turned out to be pipeline misses — the toss had
+        // already happened and the match completed normally, we just never
+        // captured it. A blind "no toss = delay" flag can't tell that case
+        // apart from a genuine pre-toss delay, which matters a lot once
+        // auto-push is ever turned on (pushing lock_time on a match that's
+        // already live/finished is actively wrong). cricbuzzState — read
+        // above regardless of whether a toss was parsed out of it — is the
+        // cheapest available signal for this: 'Preview' means Cricbuzz
+        // itself hasn't seen anything happen yet (consistent with a real
+        // delay); anything past 'Toss' (In Progress, Complete, etc.) means
+        // the match has already moved on and this is very likely a data
+        // gap, not a delay. Still notify-only either way for now — this
+        // only changes what the push says, not the decision or toss_status.
+        let pipelineMissNote = ''
+        if (cricbuzzState && cricbuzzState !== 'Preview' && cricbuzzState !== 'Toss') {
+          pipelineMissNote = ` ⚠️ Cricbuzz already shows this match at "${cricbuzzState}" — likely a data gap on our end (toss probably already happened), not a real delay. Verify before pushing anything.`
+        } else if (cricbuzzState === 'Toss') {
+          pipelineMissNote = ` Cricbuzz shows the toss happening right now but we couldn't parse the result — check manually.`
+        } else if (cricbuzzState === 'Preview') {
+          pipelineMissNote = ` Cricbuzz shows no action yet (still "Preview") — consistent with a genuine delay.`
+        }
+        // cricbuzzState === null falls through with no note: Cricbuzz isn't
+        // tracking this fixture at all, so it has nothing to add either way.
+
         let body: string
         if (autoPush.enabled && !match.lock_time) {
           const newLockTime = new Date(startMs + autoPush.push_minutes * 60 * 1000).toISOString()
           update.status     = 'delayed'
           update.lock_time  = newLockTime
-          body = `No toss confirmed, match ${timingText}${reasonText}. Auto-pushed lock time to ${newLockTime}. Confirm toss when known.`
+          body = `No toss confirmed, match ${timingText}${reasonText}. Auto-pushed lock time to ${newLockTime}. Confirm toss when known.${pipelineMissNote}`
         } else {
-          body = `No toss confirmed, match ${timingText}${reasonText}. Review and push the start time if needed.`
+          body = `No toss confirmed, match ${timingText}${reasonText}. Review and push the start time if needed.${pipelineMissNote}`
         }
 
         try {
