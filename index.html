@@ -11980,6 +11980,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       { label:'3-wicket haul',      key:'three_wicket_haul', unit:'bonus' },
       { label:'4-wicket haul',      key:'four_wicket_haul', unit:'bonus' },
       { label:'5-wicket haul',      key:'five_wicket_haul', unit:'bonus' },
+      { label:'Hat-trick bonus',    key:'hattrick_bonus',   unit:'bonus' },
       { label:'Maiden over',        key:'maiden_over',      unit:'bonus' },
       // Dot ball — only shown when the tournament's dot_ball_enabled flag is
       // on (migration_v30); ruleTableHtml() filters it out below otherwise.
@@ -11999,7 +12000,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     const DEFAULT_T20_RULES_WEB = {
       run:1, boundary4:1, boundary6:2, thirty_run_bonus:4, half_century:8, century:16, duck:-2,
       sr_above_170:6, sr_140_to_170:4, sr_below_70:-6, sr_70_to_100:-4,
-      wicket:25, maiden_over:8, dot_ball:0, three_wicket_haul:8, four_wicket_haul:8, five_wicket_haul:16,
+      wicket:25, maiden_over:8, dot_ball:0, three_wicket_haul:8, four_wicket_haul:8, five_wicket_haul:16, hattrick_bonus:16,
       economy_below_5:6, economy_5_to_6:4, economy_10_to_11:-4, economy_above_11:-6,
       catch:8, stumping:12, run_out_direct:12, run_out_indirect:6,
     };
@@ -12057,10 +12058,16 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         result.dotBallEnabled = !!tournament?.dot_ball_enabled;
 
         if (tid && state.db) {
-          // Scoring rules — getScoringRules returns the full scoring_rules JSONB object
+          // Scoring rules — getScoringRules returns the full scoring_rules JSONB object.
+          // Merged on top of the canonical DEFAULT_RULES (not shown raw) so a rule key
+          // added to the engine after this tournament already saved a custom override
+          // (e.g. hattrick_bonus) still surfaces instead of silently vanishing because
+          // it's absent from that older saved blob. Mirrors admin's buildRulesGrid /
+          // resolveEffectiveRules merge behavior.
           const allRules = await state.db.getScoringRules(tid);
           const fmtRules = allRules?.[result.fmt] ?? null;
-          if (fmtRules) { result.rules = fmtRules; result.isDefault = false; }
+          result.rules = { ...DEFAULT_RULES[result.fmt], ...(fmtRules || {}) };
+          result.isDefault = !fmtRules;
 
           // Contest config — boosters + transfers, from the specific contest
           // the Rules button was opened from (falls back to a type match,
