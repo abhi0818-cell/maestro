@@ -27,6 +27,7 @@ import { supabase } from '../lib/supabase';
 import { useTournamentStore } from '../store/tournamentStore';
 import { useContestStore }    from '../store/contestStore';
 import { getBoosterMeta }     from '../store/boosterStore';
+import { SCORING_RULES }      from '../engine/cricketScoringEngine';
 import { useOnboardingStore } from '../store/onboardingStore';
 import BoosterIcon            from '../components/BoosterIcon';
 import WalkthroughSettingsSheet from '../components/WalkthroughSettingsSheet';
@@ -291,7 +292,7 @@ export default function RulesScreen() {
       if (tErr) throw tErr;
 
       const fmtRules = tData?.scoring_rules?.[fmt] ?? null;
-      setRules(fmtRules);
+      setRules(fmtRules ? { ...SCORING_RULES[fmt], ...fmtRules } : null);
       setDotBallEnabled(!!tData?.dot_ball_enabled);
 
       // 2. Contest config — boosters + transfers.
