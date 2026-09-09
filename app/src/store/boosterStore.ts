@@ -102,7 +102,7 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   },
   team_double: {
     icon:  '🚀',
-    name:  '2x',
+    name:  'T2x',
     fullName: 'Team 2x',
     desc:  "All 11 players score 2x their base points. Use once per season.",
     scope: 'all',
@@ -126,7 +126,7 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   },
   indian_double: {
     icon:  '🇺🇸',
-    name:  '2x',
+    name:  'D2x',
     fullName: 'US 2x',
     desc:  "All US domestic (non-overseas) players in your XI score 2× their base points. Use once per season.",
     scope: 'all',
@@ -134,7 +134,7 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   },
   os_double: {
     icon:  '✈️',
-    name:  '2x',
+    name:  'O2x',
     fullName: 'OS 2x',
     desc:  "All overseas players in your XI score 2× their base points. Use once per season.",
     scope: 'all',
@@ -176,7 +176,11 @@ function getDomesticBoosterMeta(): BoosterMeta {
   const label = getDomesticLabel();
   return {
     icon:  getDomesticIcon() || DOMESTIC_ICON_FALLBACK,
-    name:  '2x',
+    // First letter of the tournament's domestic label, e.g. 'U2x' (US/MLC),
+    // 'I2x' (Indian/IPL), 'C2x' (Caribbean/CPL) — disambiguates this tile
+    // from team_double's 'T2x' and os_double's 'O2x' now that all three
+    // can appear together in one contest's available_boosters.
+    name:  `${(label?.[0] || 'D').toUpperCase()}2x`,
     fullName: `${label} 2x`,
     desc:  `All ${label} (non-overseas) players in your XI score 2× their base points.`,
     scope: 'all',
