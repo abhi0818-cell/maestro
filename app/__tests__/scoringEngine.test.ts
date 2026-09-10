@@ -242,6 +242,7 @@ describe('calcFieldingPoints — T20', () => {
 
 describe('calculateScore — captaincy multipliers', () => {
   const base = {
+    id: 'p1', // placeholder — calculateScore() never reads PlayerMatchPerf.id, this only satisfies the type
     name: 'Rohit',
     role: 'bat' as const,
     batting: { runs: 50, ballsFaced: 40, fours: 4, sixes: 1, isDismissed: false },

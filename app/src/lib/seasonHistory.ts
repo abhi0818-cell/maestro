@@ -29,13 +29,15 @@ import {
   calcBowlingPoints,
   calcFieldingPoints,
 } from '../engine/cricketScoringEngine';
-import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
+import { MatchFormat, PlayerRole, CaptaincyRole, BattingInnings, BowlingSpell, FieldingStats } from '../types';
 import { getBoosterMeta } from '../store/boosterStore';
 import { isMatchPlayed } from './matchLock';
 import { resolveEffectiveRules } from './scoringUtils';
 import { resolveBudgetWindow, resolveContestBudgetConfig, MatchLite } from './transferCap';
 
 export type MatchWeek = { id: string; label: string; match: string; date: string };
+
+export type BreakdownLine = { label: string; value: number };
 
 export type MatchPlayer = {
   name: string;
@@ -47,6 +49,18 @@ export type MatchPlayer = {
   field: number;
   bonus: number;
   multiplier: number;   // booster-aware; prefer this over a hardcoded captain/VC guess
+  /** Itemized points breakdown for this match — one line per scoring
+   * category that contributed non-zero points (Runs, Fours, Sixes, 50+
+   * bonus, Wickets, LBW/Bowled bonus, Catches, etc.), same source
+   * (calcBattingPoints/calcBowlingPoints/calcFieldingPoints) as bat/bowl/
+   * field/bonus above, so it can never contradict them. Mirrors web's
+   * histBreakdownRowHtml line-by-line. Empty when there's no recorded stat
+   * for this player in this match. */
+  breakdown: BreakdownLine[];
+  /** Short stat-line summary for the breakdown header — "40 (28)" runs
+   * (balls), "2/22 (3.0)" wkts/runs(overs), "1 fielding" — same convention
+   * as web's hist-bd-meta. Empty string when there's nothing to show. */
+  statLine: string;
 };
 
 export type MatchTeam = {
@@ -70,6 +84,70 @@ export type MatchTeam = {
   seasonBoosterUsed:   number;
   seasonBoosterAllowed: number;
 };
+
+// ─── Itemized breakdown lines ───────────────────────────────────────────────
+// Mirrors web's histBreakdownRowHtml exactly — same line labels/order/
+// thresholds — just building a typed {label,value}[] instead of HTML. Reused
+// by both getSquadSeasonHistory (here) and dailyLeaderboard.ts's
+// getDailyUserHistory so Season Long and Daily show identical breakdown
+// formatting. Takes the ALREADY-COMPUTED breakdown records from
+// calcBattingPoints/calcBowlingPoints/calcFieldingPoints (never recomputes
+// scoring) so the itemized lines can never disagree with bat/bowl/field/bonus.
+export function buildBreakdownLines(
+  st: { batting?: BattingInnings; bowling?: BowlingSpell; fielding?: FieldingStats } | undefined,
+  rules: Record<string, number>,
+  batBd?: Record<string, number>,
+  bowlBd?: Record<string, number>,
+  fieldBd?: Record<string, number>,
+): { lines: BreakdownLine[]; statLine: string } {
+  const lines: BreakdownLine[] = [];
+  const metaParts: string[] = [];
+
+  const bat = st?.batting;
+  if (bat && batBd) {
+    if (batBd.runs)      lines.push({ label: `Runs (${bat.runs || 0} × ${rules.run})`, value: batBd.runs });
+    if (batBd.boundary4) lines.push({ label: `Fours (${bat.fours || 0} × ${rules.boundary4})`, value: batBd.boundary4 });
+    if (batBd.boundary6) lines.push({ label: `Sixes (${bat.sixes || 0} × ${rules.boundary6})`, value: batBd.boundary6 });
+    if (batBd.century)             lines.push({ label: '100+ bonus', value: batBd.century });
+    else if (batBd.half_century)   lines.push({ label: '50+ bonus', value: batBd.half_century });
+    else if (batBd.thirtyRunBonus) lines.push({ label: '30+ bonus', value: batBd.thirtyRunBonus });
+    if (batBd.duck)            lines.push({ label: 'Duck penalty', value: batBd.duck });
+    if (batBd.strikeRateBonus) lines.push({ label: 'Strike-rate bonus', value: batBd.strikeRateBonus });
+    metaParts.push(`${bat.runs || 0} (${bat.ballsFaced || 0})`);
+  }
+
+  const bowl = st?.bowling;
+  if (bowl && bowlBd) {
+    if (bowlBd.wickets) lines.push({ label: `Wickets (${bowl.wickets || 0} × ${rules.wicket})`, value: bowlBd.wickets });
+    if (bowlBd.lbwBowledBonus) {
+      const premium = (bowl.wicketTypes || []).filter(t => ['lbw', 'bowled'].includes(String(t).toLowerCase())).length;
+      lines.push({ label: `LBW/Bowled bonus (${premium})`, value: bowlBd.lbwBowledBonus });
+    }
+    if (bowlBd.fiveWicket)       lines.push({ label: '5-wicket haul bonus', value: bowlBd.fiveWicket });
+    else if (bowlBd.fourWicket)  lines.push({ label: '4-wicket haul bonus', value: bowlBd.fourWicket });
+    else if (bowlBd.threeWicket) lines.push({ label: '3-wicket haul bonus', value: bowlBd.threeWicket });
+    if (bowlBd.hattrick) lines.push({ label: 'Hat-trick bonus', value: bowlBd.hattrick });
+    if (bowlBd.maidens)  lines.push({ label: `Maidens (${bowl.maidens || 0} × ${rules.maiden_over})`, value: bowlBd.maidens });
+    if (bowlBd.dotBalls) lines.push({ label: `Dot balls (${bowl.dotBalls || 0} × ${rules.dot_ball ?? 0})`, value: bowlBd.dotBalls });
+    if (bowlBd.economyBonus) lines.push({ label: 'Economy bonus', value: bowlBd.economyBonus });
+    if (bowlBd.noBalls) lines.push({ label: 'No-ball penalty', value: bowlBd.noBalls });
+    if (bowlBd.wides)   lines.push({ label: 'Wide penalty', value: bowlBd.wides });
+    const ballsBowled = bowl.ballsBowled || 0;
+    metaParts.push(`${bowl.wickets || 0}/${bowl.runsConceded || 0} (${Math.floor(ballsBowled / 6)}.${ballsBowled % 6})`);
+  }
+
+  const fld = st?.fielding;
+  if (fld && fieldBd) {
+    if (fieldBd.catches)        lines.push({ label: `Catches (${fld.catches || 0} × ${rules.catch})`, value: fieldBd.catches });
+    if (fieldBd.stumpings)      lines.push({ label: `Stumpings (${fld.stumpings || 0} × ${rules.stumping})`, value: fieldBd.stumpings });
+    if (fieldBd.runOutDirect)   lines.push({ label: `Direct run-outs (${fld.runOutDirect || 0} × ${rules.run_out_direct})`, value: fieldBd.runOutDirect });
+    if (fieldBd.runOutIndirect) lines.push({ label: `Indirect run-outs (${fld.runOutIndirect || 0} × ${rules.run_out_indirect})`, value: fieldBd.runOutIndirect });
+    const fcount = (fld.catches || 0) + (fld.stumpings || 0) + (fld.runOutDirect || 0) + (fld.runOutIndirect || 0);
+    if (fcount) metaParts.push(`${fcount} field${fcount > 1 ? 'ings' : 'ing'}`);
+  }
+
+  return { lines, statLine: metaParts.join(' · ') };
+}
 
 export async function getSquadSeasonHistory(squadId: string): Promise<{
   matchWeeks: MatchWeek[];
@@ -297,29 +375,37 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
       const st = stats[r.player_id];
       const role = (roleById[r.player_id] || r.role || 'bat') as PlayerRole;
       let bat = 0, bowl = 0, field = 0, bonus = 0;
+      let batBd: Record<string, number> | undefined;
+      let bowlBd: Record<string, number> | undefined;
+      let fieldBd: Record<string, number> | undefined;
 
       if (st?.batting) {
-        const { breakdown } = calcBattingPoints({ ...st.batting, role }, fmt, rules);
-        bat   += (breakdown.runs ?? 0) + (breakdown.boundary4 ?? 0) + (breakdown.boundary6 ?? 0);
-        bonus += (breakdown.century ?? 0) + (breakdown.half_century ?? 0)
-               + (breakdown.duck ?? 0) + (breakdown.strikeRateBonus ?? 0);
+        batBd = calcBattingPoints({ ...st.batting, role }, fmt, rules).breakdown;
+        bat   += (batBd.runs ?? 0) + (batBd.boundary4 ?? 0) + (batBd.boundary6 ?? 0);
+        bonus += (batBd.century ?? 0) + (batBd.half_century ?? 0)
+               + (batBd.duck ?? 0) + (batBd.strikeRateBonus ?? 0);
       }
       if (st?.bowling) {
-        const { breakdown } = calcBowlingPoints(st.bowling, fmt, rules);
-        bowl  += (breakdown.wickets ?? 0) + (breakdown.maidens ?? 0) + (breakdown.dotBalls ?? 0);
-        bonus += (breakdown.lbwBowledBonus ?? 0) + (breakdown.fiveWicket ?? 0) + (breakdown.fourWicket ?? 0)
-               + (breakdown.economyBonus ?? 0) + (breakdown.noBalls ?? 0) + (breakdown.wides ?? 0);
+        bowlBd = calcBowlingPoints(st.bowling, fmt, rules).breakdown;
+        bowl  += (bowlBd.wickets ?? 0) + (bowlBd.maidens ?? 0) + (bowlBd.dotBalls ?? 0);
+        bonus += (bowlBd.lbwBowledBonus ?? 0) + (bowlBd.fiveWicket ?? 0) + (bowlBd.fourWicket ?? 0)
+               + (bowlBd.economyBonus ?? 0) + (bowlBd.noBalls ?? 0) + (bowlBd.wides ?? 0)
+               + (bowlBd.hattrick ?? 0);
       }
       if (st?.fielding) {
-        field += calcFieldingPoints(st.fielding, fmt, rules).points;
+        const fieldRes = calcFieldingPoints(st.fielding, fmt, rules);
+        fieldBd = fieldRes.breakdown;
+        field += fieldRes.points;
       }
 
+      const { lines: breakdown, statLine } = buildBreakdownLines(st, rules, batBd, bowlBd, fieldBd);
       const captaincy: CaptaincyRole = r.is_captain ? 'captain' : r.is_vc ? 'vice_captain' : 'normal';
 
       return {
         name: r.player_name, team: r.team_id || '', role, captaincy,
         bat, bowl, field, bonus,
         multiplier: Number(r.multiplier ?? 1),
+        breakdown, statLine,
       };
     });
 

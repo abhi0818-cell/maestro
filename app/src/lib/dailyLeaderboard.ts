@@ -24,7 +24,7 @@ import {
 } from '../engine/cricketScoringEngine';
 import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
 import { isMatchPlayed } from './matchLock';
-import { MatchWeek, MatchPlayer, MatchTeam } from './seasonHistory';
+import { MatchWeek, MatchPlayer, MatchTeam, buildBreakdownLines } from './seasonHistory';
 import { resolveDisplayName } from './profileUtils';
 import { resolveEffectiveRules } from './scoringUtils';
 
@@ -262,22 +262,30 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
       const meta = metaById[pid] || {};
       const role = (meta.role || 'bat') as PlayerRole;
       let bat = 0, bowl = 0, field = 0, bonus = 0;
+      let batBd: Record<string, number> | undefined;
+      let bowlBd: Record<string, number> | undefined;
+      let fieldBd: Record<string, number> | undefined;
 
       if (st?.batting) {
-        const { breakdown } = calcBattingPoints({ ...st.batting, role }, fmt, rules);
-        bat   += (breakdown.runs ?? 0) + (breakdown.boundary4 ?? 0) + (breakdown.boundary6 ?? 0);
-        bonus += (breakdown.century ?? 0) + (breakdown.half_century ?? 0)
-               + (breakdown.duck ?? 0) + (breakdown.strikeRateBonus ?? 0);
+        batBd = calcBattingPoints({ ...st.batting, role }, fmt, rules).breakdown;
+        bat   += (batBd.runs ?? 0) + (batBd.boundary4 ?? 0) + (batBd.boundary6 ?? 0);
+        bonus += (batBd.century ?? 0) + (batBd.half_century ?? 0)
+               + (batBd.duck ?? 0) + (batBd.strikeRateBonus ?? 0);
       }
       if (st?.bowling) {
-        const { breakdown } = calcBowlingPoints(st.bowling, fmt, rules);
-        bowl  += (breakdown.wickets ?? 0) + (breakdown.maidens ?? 0) + (breakdown.dotBalls ?? 0);
-        bonus += (breakdown.lbwBowledBonus ?? 0) + (breakdown.fiveWicket ?? 0) + (breakdown.fourWicket ?? 0)
-               + (breakdown.economyBonus ?? 0) + (breakdown.noBalls ?? 0) + (breakdown.wides ?? 0);
+        bowlBd = calcBowlingPoints(st.bowling, fmt, rules).breakdown;
+        bowl  += (bowlBd.wickets ?? 0) + (bowlBd.maidens ?? 0) + (bowlBd.dotBalls ?? 0);
+        bonus += (bowlBd.lbwBowledBonus ?? 0) + (bowlBd.fiveWicket ?? 0) + (bowlBd.fourWicket ?? 0)
+               + (bowlBd.economyBonus ?? 0) + (bowlBd.noBalls ?? 0) + (bowlBd.wides ?? 0)
+               + (bowlBd.hattrick ?? 0);
       }
       if (st?.fielding) {
-        field += calcFieldingPoints(st.fielding, fmt, rules).points;
+        const fieldRes = calcFieldingPoints(st.fielding, fmt, rules);
+        fieldBd = fieldRes.breakdown;
+        field += fieldRes.points;
       }
+
+      const { lines: breakdown, statLine } = buildBreakdownLines(st, rules, batBd, bowlBd, fieldBd);
 
       // Old Daily picks have no per-row multiplier column (no booster system
       // existed) — derive straight from captain_id/vice_captain_id, same
@@ -293,6 +301,7 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
         name: meta.name || pid, team: tpTeamById[pid] ?? meta.team_id ?? '', role, captaincy,
         bat, bowl, field, bonus,
         multiplier: isCap ? 2 : isVc ? 1.5 : 1,
+        breakdown, statLine,
       };
     });
 

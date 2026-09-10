@@ -9,6 +9,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import BoosterIcon from '../components/BoosterIcon';
 import TeamPitchBreakdown from '../components/TeamPitchBreakdown';
+import PlayerBreakdownPanel from '../components/PlayerBreakdownPanel';
 import {
   ActivityIndicator,
   FlatList,
@@ -152,9 +153,18 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
   // Overview (pitch) is the default team-detail view; Detail (the full
   // BAT/BWL/FLD/BON row list) is one tap away, not gone.
   const [teamView, setTeamView]     = useState<'pitch' | 'rows'>('pitch');
+  // Which row's points breakup (PlayerBreakdownPanel) is open in the Detail
+  // view, if any — mirrors the selection TeamPitchBreakdown keeps for its
+  // own pitch tiles, just for the row list instead. Reset below whenever
+  // the matchweek changes, so it can't silently point at the wrong XI.
+  const [rowsSelectedIdx, setRowsSelectedIdx] = useState<number | null>(null);
   // Tabs run oldest → newest left-to-right; scroll to the end by default so
   // the active (most recent) tab is visible without an extra manual swipe.
   const mwScrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    setRowsSelectedIdx(null);
+  }, [mwId]);
 
   useEffect(() => {
     if (!entry) {
@@ -190,6 +200,10 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
 
   const team = history.find(t => t.mwId === mwId);
   const mw   = matchWeeks.find(m => m.id === mwId);
+  // Sorted once and reused by both the row list below and the breakup panel
+  // lookup, so `rowsSelectedIdx` (an index into this array) always resolves
+  // to the same player in both places.
+  const sortedPlayers = team ? [...team.players].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]) : [];
 
   return (
     <Modal
@@ -326,15 +340,25 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
                 <Text style={[styles.colHdr, { width: 44, textAlign: 'right'  }]}>PTS</Text>
               </View>
 
-              {/* Player rows — WK, Bat, AR, Bowl */}
-              {[...team.players].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]).map((p, i) => {
+              {/* Player rows — WK, Bat, AR, Bowl. Tapping a row opens its
+                  points breakup below the footer (see PlayerBreakdownPanel
+                  below) — tapping the same row again closes it. */}
+              {sortedPlayers.map((p, i) => {
                 const isCap = p.captaincy === 'captain';
                 const isVC  = p.captaincy === 'vice_captain';
                 const mult  = capMult(p);
                 const fp    = finalPts(p);
 
                 return (
-                  <View key={i} style={[styles.playerRow, i % 2 === 1 && styles.playerRowAlt]}>
+                  <Pressable
+                    key={i}
+                    onPress={() => setRowsSelectedIdx(prev => (prev === i ? null : i))}
+                    style={[
+                      styles.playerRow,
+                      i % 2 === 1 && styles.playerRowAlt,
+                      rowsSelectedIdx === i && styles.playerRowSelected,
+                    ]}
+                  >
                     <View style={[styles.roleStripe, { backgroundColor: ROLE_COLOR[p.role] }]} />
 
                     <View style={styles.playerNameCell}>
@@ -373,7 +397,7 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
                     ]}>
                       {fp % 1 === 0 ? fp : fp.toFixed(1)}
                     </Text>
-                  </View>
+                  </Pressable>
                 );
               })}
 
@@ -382,6 +406,15 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
                 <Text style={styles.mwFooterMatch}>{mw.label} · {mw.match} · Team Total</Text>
                 <Text style={styles.mwFooterPts}>{team.pts} pts</Text>
               </LinearGradient>
+
+              {/* Fills the space BELOW the footer only — rows above keep
+                  their positions, nothing shifts or gets covered. */}
+              {rowsSelectedIdx !== null && sortedPlayers[rowsSelectedIdx] && (
+                <PlayerBreakdownPanel
+                  player={sortedPlayers[rowsSelectedIdx]}
+                  onClose={() => setRowsSelectedIdx(null)}
+                />
+              )}
               </>
               )}
 
@@ -1341,6 +1374,9 @@ const styles = StyleSheet.create({
   },
   playerRowAlt: {
     backgroundColor: 'rgba(0,0,0,0.02)',
+  },
+  playerRowSelected: {
+    backgroundColor: 'rgba(201,168,76,0.08)',
   },
 
   roleStripe: {

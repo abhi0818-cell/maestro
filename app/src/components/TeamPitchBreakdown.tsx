@@ -21,8 +21,8 @@
  * since left the pool), the tile just falls back to a plain grey jersey and
  * no overseas badge rather than showing anything actually wrong.
  */
-import React, { useState } from 'react';
-import { Image, LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Image, LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, {
   Defs,
   RadialGradient,
@@ -40,6 +40,7 @@ import { PlayerRole } from '../types';
 import { useTeamStore } from '../store/teamStore';
 import { getTileBoosterDecor } from '../store/boosterStore';
 import { MatchPlayer, MatchTeam } from '../lib/seasonHistory';
+import PlayerBreakdownPanel from './PlayerBreakdownPanel';
 
 const ROLE_ICON: Record<PlayerRole, number> = {
   wk:   require('../../assets/role-icons/wk.png'),
@@ -123,7 +124,9 @@ function FieldBackground() {
 
 // ─── Player tile ────────────────────────────────────────────────────────────
 
-function PitchToken({ player, boosterKey, tsz }: { player: MatchPlayer; boosterKey: string | null; tsz: number }) {
+function PitchToken({ player, boosterKey, tsz, selected, onPress }: {
+  player: MatchPlayer; boosterKey: string | null; tsz: number; selected: boolean; onPress: () => void;
+}) {
   const isCap = player.captaincy === 'captain';
   const isVC  = player.captaincy === 'vice_captain';
 
@@ -155,7 +158,7 @@ function PitchToken({ player, boosterKey, tsz }: { player: MatchPlayer; boosterK
   const ptsFontSize   = Math.max(8, tsz * 0.235);
 
   return (
-    <View style={[styles.tile, { width: tileWidth }]}>
+    <Pressable onPress={onPress} style={[styles.tile, { width: tileWidth }, selected && styles.tileSelected]}>
       <View style={styles.avatarWrap}>
         {(isCap || isVC) && (
           <View style={[
@@ -211,21 +214,31 @@ function PitchToken({ player, boosterKey, tsz }: { player: MatchPlayer; boosterK
       <Text style={[styles.ptsTag, { fontSize: ptsFontSize }]} numberOfLines={1}>
         {finalPts.toFixed(1)}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
 // ─── Role row ─────────────────────────────────────────────────────────────────
 
-function RoleRow({ role, players, boosterKey, contentWidth }: {
-  role: PlayerRole; players: MatchPlayer[]; boosterKey: string | null; contentWidth: number;
+type IndexedPlayer = { player: MatchPlayer; idx: number };
+
+function RoleRow({ role, items, boosterKey, contentWidth, selectedIdx, onToggle }: {
+  role: PlayerRole; items: IndexedPlayer[]; boosterKey: string | null; contentWidth: number;
+  selectedIdx: number | null; onToggle: (idx: number) => void;
 }) {
-  if (players.length === 0) return null;
-  const tsz = fitTileSize(contentWidth, players.length);
+  if (items.length === 0) return null;
+  const tsz = fitTileSize(contentWidth, items.length);
   return (
     <View style={styles.row}>
-      {players.map((p, i) => (
-        <PitchToken key={i} player={p} boosterKey={boosterKey} tsz={tsz} />
+      {items.map(({ player, idx }) => (
+        <PitchToken
+          key={idx}
+          player={player}
+          boosterKey={boosterKey}
+          tsz={tsz}
+          selected={selectedIdx === idx}
+          onPress={() => onToggle(idx)}
+        />
       ))}
     </View>
   );
@@ -238,19 +251,36 @@ export default function TeamPitchBreakdown({ team }: { team: MatchTeam }) {
   // getTileBoosterDecor's single-boosterKey contract.
   const boosterKey = team.boosters[0]?.id ?? null;
 
-  const groups: Record<PlayerRole, MatchPlayer[]> = { wk: [], bat: [], ar: [], bowl: [] };
-  team.players.forEach(p => groups[p.role].push(p));
+  const groups: Record<PlayerRole, IndexedPlayer[]> = { wk: [], bat: [], ar: [], bowl: [] };
+  team.players.forEach((p, idx) => groups[p.role].push({ player: p, idx }));
 
   const [ovalWidth, setOvalWidth] = useState(0);
   const onOvalLayout = (e: LayoutChangeEvent) => setOvalWidth(e.nativeEvent.layout.width);
   const contentWidth = Math.max(0, ovalWidth - 28); // oval's own horizontal padding
+
+  // Which player's points breakup (PlayerBreakdownPanel) is open below the
+  // oval, if any. Tapping the same tile again closes it; tapping another
+  // moves it there instead. Reset on a matchweek switch — this component
+  // doesn't unmount when `team` changes (same tree position), so without
+  // this a selection would silently carry over and point at the wrong XI.
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  useEffect(() => { setSelectedIdx(null); }, [team.mwId]);
+  const toggleSelect = (idx: number) => setSelectedIdx(prev => (prev === idx ? null : idx));
 
   return (
     <View style={styles.wrap}>
       <View style={styles.oval} onLayout={onOvalLayout}>
         <FieldBackground />
         {ROLE_ORDER.map(role => (
-          <RoleRow key={role} role={role} players={groups[role]} boosterKey={boosterKey} contentWidth={contentWidth} />
+          <RoleRow
+            key={role}
+            role={role}
+            items={groups[role]}
+            boosterKey={boosterKey}
+            contentWidth={contentWidth}
+            selectedIdx={selectedIdx}
+            onToggle={toggleSelect}
+          />
         ))}
       </View>
 
@@ -258,6 +288,15 @@ export default function TeamPitchBreakdown({ team }: { team: MatchTeam }) {
         <Text style={styles.totalLabel}>Total points</Text>
         <Text style={styles.totalValue}>{team.pts}</Text>
       </View>
+
+      {/* Fills the space BELOW the total-points bar only — the oval above
+          keeps its fixed size and the rows never shift to make room. */}
+      {selectedIdx !== null && (
+        <PlayerBreakdownPanel
+          player={team.players[selectedIdx]}
+          onClose={() => setSelectedIdx(null)}
+        />
+      )}
     </View>
   );
 }
@@ -267,11 +306,23 @@ const styles = StyleSheet.create({
     backgroundColor: WRAP_BG,
   },
   oval: {
+    // No borderRadius here on purpose — the oval SHAPE comes entirely from
+    // FieldBackground's drawn SVG ellipse (mirrors CricketPitch.tsx's own
+    // `field` container, which is a plain rectangle for the same reason).
+    // This used to carry borderRadius:9999 + overflow:'hidden', which made
+    // RN hard-clip every child to a rounded boundary instead of just
+    // painting one — since this box's width and height come out close to
+    // equal on most phones, that rounded boundary read as closer to a
+    // circle than a tall oval, and it was cutting into the BOWL row nearest
+    // the bottom edge. overflow:'hidden' stays (still useful containment
+    // now that there's nothing curved to clip against), the radius doesn't.
     position:        'relative',
     marginHorizontal: 14,
     marginTop:        14,
-    height:           360,
-    borderRadius:     9999,
+    // Taller than before (was 360, leaving a visible gap of empty
+    // background below the total-points bar on most phones) — closer to
+    // web's own 460px .pitch-oval-hist now that there's headroom to use.
+    height:           440,
     overflow:         'hidden',
     justifyContent:   'space-evenly',
     paddingVertical:  16,
@@ -290,6 +341,10 @@ const styles = StyleSheet.create({
     alignItems:      'center',
     justifyContent:  'center',
     gap:             2,
+  },
+  tileSelected: {
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderRadius:    8,
   },
   avatarWrap: {
     position: 'relative',
