@@ -8,6 +8,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import BoosterIcon from '../components/BoosterIcon';
+import TeamPitchBreakdown from '../components/TeamPitchBreakdown';
 import {
   ActivityIndicator,
   FlatList,
@@ -148,6 +149,9 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
   const [history, setHistory]       = useState<MatchTeam[]>([]);
   const [loadingHist, setLoadingHist] = useState(false);
   const [mwId, setMwId]             = useState<string>('');
+  // Overview (pitch) is the default team-detail view; Detail (the full
+  // BAT/BWL/FLD/BON row list) is one tap away, not gone.
+  const [teamView, setTeamView]     = useState<'pitch' | 'rows'>('pitch');
   // Tabs run oldest → newest left-to-right; scroll to the end by default so
   // the active (most recent) tab is visible without an extra manual swipe.
   const mwScrollRef = useRef<ScrollView>(null);
@@ -287,6 +291,31 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
                 <TeamStatTiles team={team} />
               )}
 
+              {/* Overview / Detail toggle — Overview (pitch) is the default;
+                  Detail is today's full BAT/BWL/FLD/BON row list, unchanged
+                  below, just gated behind the toggle instead of always-on. */}
+              <View style={styles.teamViewToggleRow}>
+                <Text style={styles.teamViewToggleLabel}>View as</Text>
+                <View style={styles.teamViewSeg}>
+                  <Pressable
+                    style={[styles.teamViewSegBtn, teamView === 'pitch' && styles.teamViewSegBtnOn]}
+                    onPress={() => setTeamView('pitch')}
+                  >
+                    <Text style={[styles.teamViewSegText, teamView === 'pitch' && styles.teamViewSegTextOn]}>Overview</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.teamViewSegBtn, teamView === 'rows' && styles.teamViewSegBtnOn]}
+                    onPress={() => setTeamView('rows')}
+                  >
+                    <Text style={[styles.teamViewSegText, teamView === 'rows' && styles.teamViewSegTextOn]}>Detail</Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              {teamView === 'pitch' && <TeamPitchBreakdown team={team} />}
+
+              {teamView === 'rows' && (
+              <>
               {/* Column headers */}
               <View style={styles.colHeaders}>
                 <Text style={[styles.colHdr, { flex: 1 }]}>Player</Text>
@@ -353,6 +382,8 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
                 <Text style={styles.mwFooterMatch}>{mw.label} · {mw.match} · Team Total</Text>
                 <Text style={styles.mwFooterPts}>{team.pts} pts</Text>
               </LinearGradient>
+              </>
+              )}
 
             </ScrollView>
           ) : (
@@ -1231,6 +1262,54 @@ const styles = StyleSheet.create({
     textAlign:  'center',
   },
   statTileValueLit: { color: C.accent },
+
+  // Overview / Detail toggle — sits where colHeaders used to start; Detail
+  // still renders colHeaders/rows/footer exactly as before, just gated.
+  teamViewToggleRow: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   7,
+    backgroundColor:   'rgba(0,0,0,0.03)',
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  teamViewToggleLabel: {
+    color:         C.muted,
+    fontSize:      10,
+    fontWeight:    '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  teamViewSeg: {
+    flexDirection:   'row',
+    backgroundColor: 'rgba(28,31,38,0.06)',
+    borderRadius:    radius.full,
+    padding:         2,
+    gap:             2,
+  },
+  teamViewSegBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical:   5,
+    borderRadius:      radius.full,
+  },
+  teamViewSegBtnOn: {
+    backgroundColor: '#ffffff',
+    shadowColor:     '#000',
+    shadowOffset:    { width: 0, height: 1 },
+    shadowOpacity:   0.15,
+    shadowRadius:    3,
+    elevation:       1,
+  },
+  teamViewSegText: {
+    color:      C.muted,
+    fontSize:   fontSize.xs,
+    fontWeight: '700',
+  },
+  teamViewSegTextOn: {
+    color: C.text,
+  },
 
   // Column headers
   colHeaders: {
