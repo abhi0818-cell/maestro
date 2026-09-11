@@ -44,6 +44,18 @@
  * tick the same minute, and a delayed match could get locked before
  * check-toss's own update lands.
  *
+ * Observational status signals (2026-09-09, migration_v67): every tick,
+ * whichever of Cricbuzz's `state` and CricketAddictor's status badge this
+ * function already fetched for toss purposes also gets written to
+ * matches.cricbuzz_status / matches.cricketaddictor_status. These are
+ * read-only cross-checks against matches.status — that column is still
+ * driven exclusively by poll-cricapi (CricAPI's `stage`) and scrape-
+ * scorecard (CricketAddictor/Business Standard scraping). Deliberately NOT
+ * a third writer on matches.status itself: three independently-scheduled
+ * sources racing to flip one column is exactly the kind of thing that
+ * produces a hard-to-reproduce status flap, and lock-matches/scoring both
+ * key off that column directly.
+ *
  * Why "no toss by the decision point" is the delay signal (rather than
  * text-matching for words like "rain"/"delayed" in a source's status
  * string): every source phrases delays differently, and some never say the
@@ -425,6 +437,25 @@ function parseCricketAddictorToss(html: string): TossResult | null {
   const delayM = text.match(DELAY_KEYWORDS)
   if (!m) return null
   return { winnerName: m[1].trim(), decision: normalizeDecision(m[2]), delayText: delayM ? delayM[0] : null }
+}
+
+// 2026-09-09: CricketAddictor's own status badge, confirmed live on both a
+// completed match ("COMPLETED / Match 30 / Providence Stadium") and a
+// not-yet-started one ("SCHEDULED / Match 31 / Providence Stadium") — the
+// badge word always sits directly before "/ Match <N> /". Captured purely as
+// an observational signal alongside Cricbuzz's `state` (see cricbuzzState
+// below) — matches.status itself stays driven by poll-cricapi/scrape-
+// scorecard only. Untested against a LIVE/in-progress match (none were live
+// while this was written) — if that phrasing turns out different, this will
+// just come back null for it rather than mis-parse, same fallback behavior
+// as every other regex-based parse in this file.
+const CRICKETADDICTOR_STATUS_BADGE = /\b([A-Za-z][A-Za-z ]{1,22}?)\s*\/\s*Match\s+\d+\s*\//
+
+function parseCricketAddictorStatus(html: string): string | null {
+  const text = stripTags(html)
+  const m = text.match(CRICKETADDICTOR_STATUS_BADGE)
+  if (!m) return null
+  return m[1].trim().toUpperCase()
 }
 
 // CricAPI's tossWinner comes back lowercase (e.g. "guyana amazon warriors") —
@@ -901,6 +932,10 @@ Deno.serve(async (req) => {
 
       // ── Source 2: CricketAddictor ────────────────────────────────────────
       let addictorToss: TossResult | null = null
+      // CricketAddictor's own status badge (SCHEDULED/LIVE/COMPLETED/etc) —
+      // same purpose as cricbuzzState below, captured regardless of whether a
+      // toss was parsed. See parseCricketAddictorStatus's header comment.
+      let addictorStatus: string | null = null
       try {
         let scorecardUrl = match.scorecard_url
         if (!scorecardUrl && homeTeam && awayTeam) {
@@ -922,6 +957,7 @@ Deno.serve(async (req) => {
           if (r.ok) {
             const html = await r.text()
             addictorToss = parseCricketAddictorToss(html)
+            addictorStatus = parseCricketAddictorStatus(html)
           }
         }
       } catch (e: any) {
@@ -957,6 +993,19 @@ Deno.serve(async (req) => {
         console.warn(`[check-toss] Cricbuzz check failed for M${match.match_number}:`, e.message)
       }
 
+      // ── Independent status signals (2026-09-09) ─────────────────────────
+      // cricbuzzState and addictorStatus above are each that source's own
+      // notion of match status, captured purely for cross-checking against
+      // matches.status (which stays driven exclusively by poll-cricapi and
+      // scrape-scorecard — see migration_v67's header comment for why this
+      // is deliberately two more read-only columns rather than a third
+      // writer on that column). Built once here and spread into every write
+      // below so a status update never gets lost on whichever code path a
+      // given tick takes.
+      const statusFields: Record<string, unknown> = {}
+      if (cricbuzzState !== null) statusFields.cricbuzz_status = cricbuzzState
+      if (addictorStatus !== null) statusFields.cricketaddictor_status = addictorStatus
+
       // ── Persist each source's independent read, for corroboration ──────────
       // (migration_v60_toss_source_log.sql, widened to allow 'cricbuzz' by
       // migration_v61). This runs regardless of which source ends up
@@ -987,6 +1036,13 @@ Deno.serve(async (req) => {
       // CORROBORATION_WINDOW_MINUTES after the match's ORIGINAL confirmation.
       if (alreadyConfirmed) {
         summary.corroborationPolled++
+        if (Object.keys(statusFields).length) {
+          try {
+            await sb.from('matches').update(statusFields).eq('id', match.id)
+          } catch (e: any) {
+            console.warn(`[check-toss] status-signal write failed M${match.match_number}:`, e.message)
+          }
+        }
         continue
       }
 
@@ -1019,11 +1075,12 @@ Deno.serve(async (req) => {
             toss_decision   : toss.decision,
             toss_source     : source,
             toss_checked_at : nowISO,
+            ...statusFields,
           }).eq('id', match.id)
           summary.tossConfirmed++
         } catch (e: any) {
           summary.errors.push(`Confirm-notify failed M${match.match_number}: ${e.message}`)
-          await sb.from('matches').update({ toss_checked_at: nowISO }).eq('id', match.id)
+          await sb.from('matches').update({ toss_checked_at: nowISO, ...statusFields }).eq('id', match.id)
         }
         continue
       }
@@ -1035,7 +1092,7 @@ Deno.serve(async (req) => {
 
       if (!pastDecisionPoint) {
         await sb.from('matches').update({
-          toss_status: 'pending', toss_checked_at: nowISO,
+          toss_status: 'pending', toss_checked_at: nowISO, ...statusFields,
         }).eq('id', match.id)
         continue
       }
@@ -1049,7 +1106,7 @@ Deno.serve(async (req) => {
       const lastNotifiedMs = match.toss_delay_notified_at ? new Date(match.toss_delay_notified_at).getTime() : null
       const shouldNotify = lastNotifiedMs === null || (nowMs - lastNotifiedMs) >= autoPush.renotify_minutes * 60 * 1000
 
-      const update: Record<string, unknown> = { toss_status: 'delay_flagged', toss_checked_at: nowISO }
+      const update: Record<string, unknown> = { toss_status: 'delay_flagged', toss_checked_at: nowISO, ...statusFields }
 
       if (shouldNotify) {
         // Positive = still before start_time (we're inside the 10-minute

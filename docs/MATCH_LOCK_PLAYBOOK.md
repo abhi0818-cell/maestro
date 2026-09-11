@@ -227,3 +227,59 @@ unscored.
 | Called off, before gate | not yet fired | Abandon | — (nothing was ever spent) |
 | Called off, after gate | already fired | Abandon (stops further damage only) | None — locked spend is sunk, match drops from history |
 | CricAPI reports a real abandoned/no-result match | N/A — maps to `completed` | Let it finalize normally | N/A, this is normal scoring |
+
+---
+
+## Planned — not yet built
+
+### Actionable toss-delay confirmation (tap-to-app-screen)
+
+**Problem today:** when `check-toss` flags a match `delay_flagged` (Scenario 2/3
+territory, T-10 decision point), the admin gets a push notification, but it's purely
+informational. The admin still has to open the app, find the match on the Schedule
+tab, and manually work through Scenario 2/3's steps (Delay + push/set `lock_time`) —
+or decide to let it lock at the scheduled time as-is.
+
+**Goal:** turn that notification into a decision, not just information — effectively
+a **Yes (push the lock back ~10 min) / No (lock at the scheduled time)** choice,
+answerable from the notification itself.
+
+**Chosen approach:** tap-to-open-app-to-a-confirm-screen — **not** native OS
+notification action buttons. Native action buttons need to run their handler in the
+background, including when the app has been fully killed (not just backgrounded);
+Expo push (what `send-push-notification` already uses) can't guarantee that reliably.
+A single admin tapping through to a small in-app confirm screen is slower by a second
+or two but actually works every time, which matters a lot more given the "no
+recourse once the gate fires" rule this whole playbook is built around.
+
+**Depends on:** the `cricbuzz_status` / `cricketaddictor_status` observational
+columns on `matches` (migration `v67_source_status_signals`, shipped in check-toss
+v16, 2026-09-09). These give two independent per-source signals of what's actually
+happening with a match (Preview/Toss/In Progress/Complete from Cricbuzz;
+SCHEDULED/LIVE/COMPLETED from CricketAddictor) without either one driving
+`matches.status` directly. The idea is that once those signals reliably line up
+with each other (e.g. both sources agree the match hasn't actually started), the
+admin can trust the "delay" read enough to act on a single tap instead of
+cross-checking multiple apps/sites by hand.
+
+**Not yet built — pieces needed later:**
+- A new edge function (e.g. `resolve-toss-delay`) taking `matchId` + an
+  `action` of `'push_delay' | 'lock_now'`, reusing `send-push-notification`'s
+  existing admin-auth pattern (session JWT checked against `ADMIN_EMAIL`, since this
+  is an admin-initiated write, not a system one).
+  - `push_delay` would do what Scenario 2 does today by hand: ensure `status =
+    'delayed'`, push `lock_time` forward (e.g. +10m from now, or from the current
+    `lock_time`/`start_time` base per the existing +15/+30 convention).
+  - `lock_now` would simply be a no-op / acknowledgement — let the existing gate
+    fire at the scheduled time as normal.
+- A small in-app confirm screen the notification deep-links into, showing the match,
+  the current signals (Cricbuzz/CricketAddictor status + toss info if any), and the
+  two action buttons.
+- Deep-linking wired off the `data: {matchId, kind: 'toss_delay'}` payload that
+  `check-toss`'s `notifyAdmin()` already attaches to every `toss_delay` notification
+  today — no changes needed on the sending side for this part, the hook point
+  already exists.
+
+**Explicitly out of scope for this phase:** no automatic/unattended action —  a
+human still taps Yes or No. Full automation (acting on the signals with no admin tap
+at all) is a further-out idea and not part of this plan.
