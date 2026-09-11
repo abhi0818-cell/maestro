@@ -5,15 +5,23 @@
  * the same rendering can be reused by the live-match team view (MyLiveTeamModal)
  * without duplicating ~150 lines of JSX/styles. Takes the same MatchTeam shape
  * seasonHistory.ts / dailyLeaderboard.ts already produce.
+ *
+ * Tapping a row opens that player's itemized points breakup (PlayerBreakdownPanel)
+ * below the footer, same as the Detail row list LeaderboardScreen's
+ * TeamDetailModal hand-rolls for its own Overview/Detail toggle — the
+ * selection is kept internally (like TeamPitchBreakdown keeps its own pitch-tile
+ * selection) so every caller gets tap-to-expand for free instead of having to
+ * wire up its own selectedIdx state.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import BoosterIcon from './BoosterIcon';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { PlayerRole } from '../types';
 import { fontSize, radius, spacing } from '../theme';
 import { MatchPlayer, MatchTeam } from '../lib/seasonHistory';
+import PlayerBreakdownPanel from './PlayerBreakdownPanel';
 
 const G = {
   mwFooter: ['rgba(201,168,76,0.1)', 'rgba(245,240,224,0.85)'] as const,
@@ -53,6 +61,15 @@ export function finalPts(p: MatchPlayer): number {
 }
 
 export default function TeamPointsBreakdown({ team, footerLabel }: { team: MatchTeam; footerLabel?: string }) {
+  // Which row's points breakup is open below the footer, if any. Reset on a
+  // matchweek switch — callers like MyLiveTeamModal don't remount this
+  // component when `team` changes (same tree position), so without this a
+  // selection would silently carry over and point at the wrong XI.
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  useEffect(() => { setSelectedIdx(null); }, [team.mwId]);
+
+  const sortedPlayers = [...team.players].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]);
+
   return (
     <>
       {/* Booster bar */}
@@ -79,15 +96,24 @@ export default function TeamPointsBreakdown({ team, footerLabel }: { team: Match
         <Text style={[styles.colHdr, { width: 44, textAlign: 'right'  }]}>PTS</Text>
       </View>
 
-      {/* Player rows — WK, Bat, AR, Bowl */}
-      {[...team.players].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]).map((p, i) => {
+      {/* Player rows — WK, Bat, AR, Bowl. Tapping a row opens its points
+          breakup below the footer; tapping the same row again closes it. */}
+      {sortedPlayers.map((p, i) => {
         const isCap = p.captaincy === 'captain';
         const isVC  = p.captaincy === 'vice_captain';
         const mult  = capMult(p);
         const fp    = finalPts(p);
 
         return (
-          <View key={i} style={[styles.playerRow, i % 2 === 1 && styles.playerRowAlt]}>
+          <Pressable
+            key={i}
+            onPress={() => setSelectedIdx(prev => (prev === i ? null : i))}
+            style={[
+              styles.playerRow,
+              i % 2 === 1 && styles.playerRowAlt,
+              selectedIdx === i && styles.playerRowSelected,
+            ]}
+          >
             <View style={[styles.roleStripe, { backgroundColor: ROLE_COLOR[p.role] }]} />
 
             <View style={styles.playerNameCell}>
@@ -126,7 +152,7 @@ export default function TeamPointsBreakdown({ team, footerLabel }: { team: Match
             ]}>
               {fp % 1 === 0 ? fp : fp.toFixed(1)}
             </Text>
-          </View>
+          </Pressable>
         );
       })}
 
@@ -135,6 +161,15 @@ export default function TeamPointsBreakdown({ team, footerLabel }: { team: Match
         <Text style={styles.mwFooterMatch} numberOfLines={1}>{footerLabel ?? ''}</Text>
         <Text style={styles.mwFooterPts}>{team.pts} pts</Text>
       </LinearGradient>
+
+      {/* Fills the space BELOW the footer only — rows above keep their
+          positions, nothing shifts or gets covered. */}
+      {selectedIdx !== null && sortedPlayers[selectedIdx] && (
+        <PlayerBreakdownPanel
+          player={sortedPlayers[selectedIdx]}
+          onClose={() => setSelectedIdx(null)}
+        />
+      )}
     </>
   );
 }
@@ -204,6 +239,9 @@ const styles = StyleSheet.create({
   },
   playerRowAlt: {
     backgroundColor: 'rgba(0,0,0,0.02)',
+  },
+  playerRowSelected: {
+    backgroundColor: 'rgba(201,168,76,0.08)',
   },
 
   roleStripe: {

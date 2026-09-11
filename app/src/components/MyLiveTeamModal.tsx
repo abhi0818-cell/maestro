@@ -15,6 +15,13 @@
  * Shows whichever of Daily / SL applies for this user — both if they have
  * teams in both contest types for the live match, one if only one applies,
  * or an empty state if neither.
+ *
+ * Each section gets the same Overview/Detail toggle as LeaderboardScreen's
+ * TeamDetailModal: Overview (TeamPitchBreakdown — pitch layout, tap a player
+ * for their points breakup) is the default, Detail (TeamPointsBreakdown's
+ * BAT/BWL/FLD/BON row list, itself now tap-to-expand) is one tap away. One
+ * toggle per section — keyed by section.key — so Daily and Season Squad can
+ * be in different view modes when both are shown for the same live match.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -27,6 +34,7 @@ import { fontSize, radius, spacing } from '../theme';
 import { getDailyUserHistory } from '../lib/dailyLeaderboard';
 import { getSquadSeasonHistory, MatchTeam, MatchWeek } from '../lib/seasonHistory';
 import TeamPointsBreakdown from './TeamPointsBreakdown';
+import TeamPitchBreakdown from './TeamPitchBreakdown';
 
 const G = {
   bg:    ['#F5F0E0', '#EDE8D5', '#E8E2CE'] as const,
@@ -58,6 +66,11 @@ export default function MyLiveTeamModal({
 }: Props) {
   const [sections, setSections] = useState<Section[]>([]);
   const [loading,  setLoading]  = useState(false);
+  // Overview/Detail toggle, one entry per section (keyed by section.key) so
+  // Daily and Season Squad can independently be pitch or row view. Overview
+  // is the default, same as LeaderboardScreen's TeamDetailModal.
+  const [teamView, setTeamView] = useState<Record<string, 'pitch' | 'rows'>>({});
+  const viewFor = (key: string) => teamView[key] ?? 'pitch';
 
   useEffect(() => {
     if (!visible || !matchId) { setSections([]); return; }
@@ -119,17 +132,43 @@ export default function MyLiveTeamModal({
             </View>
           ) : (
             <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-              {sections.map(s => (
-                <View key={s.key} style={styles.section}>
-                  <View style={styles.sectionHeaderRow}>
-                    <Text style={styles.sectionLabel}>{s.label}</Text>
-                    <Text style={styles.sectionPts}>{s.team.pts} pts</Text>
+              {sections.map(s => {
+                const view = viewFor(s.key);
+                return (
+                  <View key={s.key} style={styles.section}>
+                    <View style={styles.sectionHeaderRow}>
+                      <Text style={styles.sectionLabel}>{s.label}</Text>
+                      <Text style={styles.sectionPts}>{s.team.pts} pts</Text>
+                    </View>
+
+                    <View style={styles.teamViewToggleRow}>
+                      <Text style={styles.teamViewToggleLabel}>View as</Text>
+                      <View style={styles.teamViewSeg}>
+                        <Pressable
+                          style={[styles.teamViewSegBtn, view === 'pitch' && styles.teamViewSegBtnOn]}
+                          onPress={() => setTeamView(prev => ({ ...prev, [s.key]: 'pitch' }))}
+                        >
+                          <Text style={[styles.teamViewSegText, view === 'pitch' && styles.teamViewSegTextOn]}>Overview</Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.teamViewSegBtn, view === 'rows' && styles.teamViewSegBtnOn]}
+                          onPress={() => setTeamView(prev => ({ ...prev, [s.key]: 'rows' }))}
+                        >
+                          <Text style={[styles.teamViewSegText, view === 'rows' && styles.teamViewSegTextOn]}>Detail</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+
+                    {view === 'pitch' ? (
+                      <TeamPitchBreakdown team={s.team} />
+                    ) : (
+                      <View style={styles.sectionPanel}>
+                        <TeamPointsBreakdown team={s.team} footerLabel={`${s.mw.label} · ${s.mw.match} · Team Total`} />
+                      </View>
+                    )}
                   </View>
-                  <View style={styles.sectionPanel}>
-                    <TeamPointsBreakdown team={s.team} footerLabel={`${s.mw.label} · ${s.mw.match} · Team Total`} />
-                  </View>
-                </View>
-              ))}
+                );
+              })}
             </ScrollView>
           )}
 
@@ -176,5 +215,55 @@ const styles = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: C.border,
     borderBottomWidth: 1, borderBottomColor: C.border,
     backgroundColor: 'rgba(255,255,255,0.4)',
+  },
+
+  // Overview / Detail toggle — mirrors LeaderboardScreen's TeamDetailModal.
+  teamViewToggleRow: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   7,
+    marginBottom:      spacing.sm,
+    backgroundColor:   'rgba(0,0,0,0.03)',
+    borderTopWidth:    1,
+    borderTopColor:    C.border,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  teamViewToggleLabel: {
+    color:         C.muted,
+    fontSize:      10,
+    fontWeight:    '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  teamViewSeg: {
+    flexDirection:   'row',
+    backgroundColor: 'rgba(28,31,38,0.06)',
+    borderRadius:    radius.full,
+    padding:         2,
+    gap:             2,
+  },
+  teamViewSegBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical:   5,
+    borderRadius:      radius.full,
+  },
+  teamViewSegBtnOn: {
+    backgroundColor: '#ffffff',
+    shadowColor:     '#000',
+    shadowOffset:    { width: 0, height: 1 },
+    shadowOpacity:   0.15,
+    shadowRadius:    3,
+    elevation:       1,
+  },
+  teamViewSegText: {
+    color:      C.muted,
+    fontSize:   fontSize.xs,
+    fontWeight: '700',
+  },
+  teamViewSegTextOn: {
+    color: C.text,
   },
 });
