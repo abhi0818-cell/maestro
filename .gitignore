@@ -2,6 +2,7 @@ node_modules/
 .DS_Store
 supabase/.temp/
 photo_import_output/
-M19 scorecard.xlsx
-~$M19 scorecard.xlsx
+M* scorecard.xlsx
+~$M* scorecard.xlsx
 admin.js.bak_manualsc
+*.bak_*
