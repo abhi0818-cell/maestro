@@ -39,6 +39,8 @@ import {
 import { useLiveMatch } from '../lib/liveScore';
 import { getLeaderboardHistory, LeaderboardHistory } from '../lib/leaderboardHistory';
 import { LeaderboardProgressChart } from '../components/LeaderboardProgressChart';
+import { getSquadTeamStats, SquadTeamStats, TeamStatsPlayer } from '../lib/teamStats';
+import TeamStatsPlayerSheet from '../components/TeamStatsPlayerSheet';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -596,6 +598,45 @@ function EntryRow({ entry, onPress, showSlCols }: EntryRowProps) {
   );
 }
 
+function TeamStatsRow({ player, rank, onPress }: { player: TeamStatsPlayer; rank: number; onPress: () => void }) {
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.tsRowWrap, pressed && styles.rowPressed]}
+      onPress={onPress}
+    >
+      <View style={styles.tsRow}>
+        <View style={styles.rankBox}>
+          <Text style={styles.rankNum}>{rank}</Text>
+        </View>
+        <View style={styles.nameBlock}>
+          <View style={styles.tsNameRow}>
+            <Text style={styles.displayName}>{player.name}</Text>
+            <Text style={styles.tsRole}>{(player.role ?? '').toUpperCase()}</Text>
+            {player.timesCaptain > 0 && (
+              <View style={[styles.tsBadge, styles.tsBadgeCap]}>
+                <Text style={styles.tsBadgeText}>C{player.timesCaptain > 1 ? `×${player.timesCaptain}` : ''}</Text>
+              </View>
+            )}
+            {player.timesVc > 0 && (
+              <View style={[styles.tsBadge, styles.tsBadgeVc]}>
+                <Text style={styles.tsBadgeTextVc}>VC{player.timesVc > 1 ? `×${player.timesVc}` : ''}</Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.teamName}>
+            {player.matchesInXi} match{player.matchesInXi !== 1 ? 'es' : ''} in XI
+          </Text>
+        </View>
+        <Text style={styles.pts}>
+          {player.pointsForTeam.toLocaleString()}
+          <Text style={styles.ptsSuffix}> pts</Text>
+        </Text>
+        <Text style={styles.rowArrow}>›</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 type Props = BottomTabScreenProps<RootTabParamList, 'Leaderboard'>;
@@ -627,10 +668,18 @@ export default function LeaderboardScreen({ route }: Props) {
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
 
   // ── Progress chart view state ────────────────────────────────────────────────
-  const [viewMode,       setViewMode]       = useState<'table' | 'chart'>('table');
+  const [viewMode,       setViewMode]       = useState<'table' | 'chart' | 'stats'>('table');
   const [chartHistory,   setChartHistory]   = useState<LeaderboardHistory | null>(null);
   const [chartLoading,   setChartLoading]   = useState(false);
   const [chartError,     setChartError]     = useState<string | null>(null);
+
+  // ── Team Stats view state — my squad's own players, ranked by points
+  // earned while in the XI (see app/src/lib/teamStats.ts). SL/private only,
+  // same squad-scoped source as the chart above, just a different shape. ──
+  const [teamStats,        setTeamStats]        = useState<SquadTeamStats | null>(null);
+  const [teamStatsLoading, setTeamStatsLoading]  = useState(false);
+  const [teamStatsError,   setTeamStatsError]    = useState<string | null>(null);
+  const [statsPlayer,      setStatsPlayer]       = useState<TeamStatsPlayer | null>(null);
 
   // ── Daily-only state ────────────────────────────────────────────────────────
   // Daily has no persistent squad, so it ranks ONE match at a time (mirrors
@@ -720,11 +769,12 @@ export default function LeaderboardScreen({ route }: Props) {
       .finally(() => setDailyLoading(false));
   }, [selectedDailyMatchId, isDailyTab, user?.id]);
 
-  // Reset to table view when switching to Daily (no history for Daily)
+  // Reset to table view when switching to Daily (no history/stats for Daily)
   useEffect(() => {
-    if (isDailyTab && viewMode === 'chart') {
+    if (isDailyTab && viewMode !== 'table') {
       setViewMode('table');
       setChartHistory(null);
+      setTeamStats(null);
     }
   }, [isDailyTab]);
 
@@ -743,6 +793,22 @@ export default function LeaderboardScreen({ route }: Props) {
 
   const entries = isDailyTab ? dailyEntries : (sbEntries[activeTab] ?? []);
   const myEntry = entries.find(e => e.isCurrentUser);
+
+  // Fetch Team Stats when entering stats mode for an SL/private tab — reads
+  // "my squad" the same way the rest of this screen does: the current
+  // user's own row in the already-loaded leaderboard entries for this tab
+  // (myEntry.squadId), not a separate squad lookup.
+  useEffect(() => {
+    if (viewMode !== 'stats' || isDailyTab) return;
+    const squadId = myEntry?.squadId;
+    if (!squadId) { setTeamStats(null); return; }
+    setTeamStatsLoading(true);
+    setTeamStatsError(null);
+    getSquadTeamStats(squadId)
+      .then(s => setTeamStats(s))
+      .catch(err => setTeamStatsError(err.message ?? 'Failed to load team stats'))
+      .finally(() => setTeamStatsLoading(false));
+  }, [viewMode, activeTab, isDailyTab, myEntry?.squadId]);
   const listLoading = isDailyTab ? dailyLoading : loading;
   // SL and private leagues share the squad/booster/transfer system — daily
   // contests don't, so only they get the Booster/Xfer columns (mirrors
@@ -818,6 +884,14 @@ export default function LeaderboardScreen({ route }: Props) {
               📈 Progress
             </Text>
           </Pressable>
+          <Pressable
+            style={[styles.viewPill, viewMode === 'stats' && styles.viewPillActive]}
+            onPress={() => setViewMode('stats')}
+          >
+            <Text style={[styles.viewPillText, viewMode === 'stats' && styles.viewPillTextActive]}>
+              📊 Team Stats
+            </Text>
+          </Pressable>
         </View>
       )}
 
@@ -867,6 +941,34 @@ export default function LeaderboardScreen({ route }: Props) {
           ) : chartHistory ? (
             <Text style={styles.empty}>No match data yet for this contest</Text>
           ) : null}
+        </ScrollView>
+      ) : viewMode === 'stats' ? (
+        <ScrollView contentContainerStyle={styles.chartScroll} showsVerticalScrollIndicator={false}>
+          {teamStatsLoading ? (
+            <View style={styles.spinnerWrap}>
+              <ActivityIndicator size="large" color="#C9A84C" />
+            </View>
+          ) : teamStatsError ? (
+            <Text style={styles.empty}>{teamStatsError}</Text>
+          ) : !teamStats || teamStats.leaderboard.length === 0 ? (
+            <Text style={styles.empty}>
+              No scored matches yet — Team Stats will appear once your XI has played.
+            </Text>
+          ) : (
+            <>
+              <View style={styles.tsSummaryRow}>
+                <Text style={styles.tsSummaryText}>
+                  {teamStats.matchesPlayed} match{teamStats.matchesPlayed !== 1 ? 'es' : ''} played · {teamStats.playersUsed} players used
+                </Text>
+                <Text style={styles.tsSummaryTotal}>
+                  Season total: <Text style={styles.tsSummaryTotalNum}>{teamStats.seasonTotal}</Text>
+                </Text>
+              </View>
+              {teamStats.leaderboard.map((p, i) => (
+                <TeamStatsRow key={p.playerId} player={p} rank={i + 1} onPress={() => setStatsPlayer(p)} />
+              ))}
+            </>
+          )}
         </ScrollView>
       ) : (
         <>
@@ -921,6 +1023,14 @@ export default function LeaderboardScreen({ route }: Props) {
           initialMwId={isDailyTab ? selectedDailyMatchId : undefined}
         />
       )}
+
+      {/* ── Team Stats player drilldown — consistent-with-app sheet, see
+            TeamStatsPlayerSheet's header comment ── */}
+      <TeamStatsPlayerSheet
+        visible={!!statsPlayer}
+        player={statsPlayer}
+        onClose={() => setStatsPlayer(null)}
+      />
 
       </SafeAreaView>
     </View>
@@ -1143,6 +1253,40 @@ const styles = StyleSheet.create({
     padding:       spacing.lg,
     paddingBottom: spacing.xxl,
   },
+
+  // Team Stats — per-player leaderboard rows (mirrors the entry-row visual
+  // language above, simplified: no podium/avatar, since it's always the
+  // same squad's own players).
+  tsSummaryRow: {
+    flexDirection:  'row',
+    justifyContent: 'space-between',
+    alignItems:     'center',
+    paddingHorizontal: spacing.xs,
+    paddingBottom:  spacing.sm,
+  },
+  tsSummaryText:      { color: C.muted, fontSize: fontSize.xs, fontWeight: '600' },
+  tsSummaryTotal:      { color: C.muted, fontSize: fontSize.xs, fontWeight: '600' },
+  tsSummaryTotalNum:   { color: C.accent, fontWeight: '800' },
+
+  tsRowWrap: { marginBottom: 6 },
+  tsRow: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             spacing.md,
+    padding:         spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    borderWidth:     1,
+    borderColor:     C.border,
+    borderRadius:    radius.lg,
+    ...shadow.card,
+  },
+  tsNameRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 },
+  tsRole:    { color: C.muted, fontSize: fontSize.xs, fontWeight: '600' },
+  tsBadge:   { borderRadius: radius.sm, paddingHorizontal: 5, paddingVertical: 1 },
+  tsBadgeCap: { backgroundColor: 'rgba(201,168,76,0.18)' },
+  tsBadgeVc:  { backgroundColor: 'rgba(45,106,53,0.15)' },
+  tsBadgeText: { fontSize: 9, fontWeight: '700', color: C.gold },
+  tsBadgeTextVc: { fontSize: 9, fontWeight: '700', color: C.good },
 
   // ── Team Detail Modal ─────────────────────────────────────────────────────
 

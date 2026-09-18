@@ -5432,6 +5432,89 @@ export function createDb(cfg = {}) {
       };
     },
 
+    /**
+     * Team Stats — how each of THIS squad's own players scored while they
+     * were actually in the XI, ranked by points earned (not their raw
+     * season-wide stats). Powers the Leaderboard screen's Table/Progress/
+     * Team Stats pill row.
+     *
+     * Reuses getSquadSeason()'s existing query + grouping (same
+     * tournament-scoped v_match_xi_with_scores read, same booster-aware
+     * total_points) instead of re-querying — this re-shapes that by-match
+     * data into by-player totals, so there's a single source of truth for
+     * the scoring math.
+     *
+     * @param {string} squadId
+     * @returns {Promise<{
+     *   seasonTotal: number, matchesPlayed: number, playersUsed: number,
+     *   leaderboard: Array<{
+     *     player_id, name, role, team_id,
+     *     matches_in_xi, points_for_team, times_captain, times_vc,
+     *     log: Array<{ match_id, match_number, played_on, home_team_id,
+     *       away_team_id, is_captain, is_vc, base_points, multiplier,
+     *       total_points, batting, bowling, fielding,
+     *       boosted: boolean, booster: string|null }>
+     *   }>
+     * }>}
+     */
+    async getSquadTeamStats(squadId) {
+      const season = await this.getSquadSeason(squadId);
+      if (!season.matches.length) {
+        return { seasonTotal: 0, matchesPlayed: 0, playersUsed: 0, leaderboard: [] };
+      }
+
+      const sb = await getClient();
+      const { data: boosterRows, error } = await sb
+        .from('user_booster_activations')
+        .select('match_id, booster')
+        .eq('squad_id', squadId);
+      if (error) throw error;
+      const boosterByMatch = {};
+      (boosterRows || []).forEach(b => { boosterByMatch[b.match_id] = b.booster; });
+
+      const byPlayer = {};
+      season.matches.forEach(m => {
+        m.players.forEach(p => {
+          const rec = (byPlayer[p.player_id] ??= {
+            player_id: p.player_id, name: p.player_name, role: p.role, team_id: p.team_id,
+            matches_in_xi: 0, points_for_team: 0, times_captain: 0, times_vc: 0, log: [],
+          });
+          rec.matches_in_xi += 1;
+          rec.points_for_team += Number(p.total_points ?? 0);
+          if (p.is_captain) rec.times_captain += 1;
+          if (p.is_vc)      rec.times_vc      += 1;
+
+          // Anything above the plain captain (2×) / vice-captain (1.5×) rate
+          // came from an active booster — name it instead of leaving an
+          // unexplained ×3 or ×4 on the row (mirrors the reviewed prototype).
+          const mult      = Number(p.multiplier ?? 1);
+          const plainMult = p.is_captain ? 2 : (p.is_vc ? 1.5 : 1);
+          const boosted    = Math.abs(mult - plainMult) > 0.01;
+
+          rec.log.push({
+            match_id: m.match_id, match_number: m.match_number, played_on: m.played_on,
+            home_team_id: m.home_team_id, away_team_id: m.away_team_id,
+            is_captain: !!p.is_captain, is_vc: !!p.is_vc,
+            base_points: p.raw_points, multiplier: mult, total_points: Number(p.total_points ?? 0),
+            batting: p.batting, bowling: p.bowling, fielding: p.fielding,
+            boosted,
+            booster: boosted ? (boosterByMatch[m.match_id] || null) : null,
+          });
+        });
+      });
+
+      const leaderboard = Object.values(byPlayer)
+        .map(p => ({ ...p, points_for_team: +p.points_for_team.toFixed(1) }))
+        .sort((a, b) => b.points_for_team - a.points_for_team);
+
+      return {
+        seasonTotal  : season.seasonTotal,
+        matchesPlayed: season.matches.length,
+        playersUsed  : leaderboard.length,
+        leaderboard,
+      };
+    },
+
     // ─── Shared squads ───────────────────────────────────────────────────────
 
     /**

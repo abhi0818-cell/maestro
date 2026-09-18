@@ -851,6 +851,32 @@
       transition: all 0.15s; font-family: inherit;
     }
     .lbv-pill.active { background: var(--accent); color: #1C1F26; }
+
+    /* ── Team Stats pill content (per-player breakdown for MY squad) ───── */
+    #lbStatsContent { padding: 0; }
+    .ts-summary { display:flex; justify-content:space-between; padding:10px 20px; font-size:11px; color:var(--muted); border-bottom:1px solid var(--border); background:var(--panel-2); }
+    .ts-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .ts-table th { padding:8px 10px; text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:var(--muted); background:var(--panel-2); position:sticky; top:0; }
+    .ts-table th.r { text-align:right; }
+    .ts-table td { padding:9px 10px; border-bottom:1px solid rgba(214,207,168,0.7); font-size:12px; vertical-align:middle; }
+    .ts-table td.r { text-align:right; }
+    .ts-rank { color:var(--muted); font-weight:700; width:24px; }
+    .ts-row { cursor:pointer; }
+    .ts-row:hover { background:var(--panel-2); }
+    .ts-name { font-weight:600; }
+    .ts-role { font-size:10px; color:var(--muted); margin-left:5px; }
+    .ts-badge { display:inline-block; font-size:9px; font-weight:700; border-radius:4px; padding:1px 5px; margin-left:4px; }
+    .ts-badge.cap { background:rgba(201,168,76,0.18); color:#C9A84C; }
+    .ts-badge.vc  { background:rgba(37,99,235,0.15); color:#2563EB; }
+    .ts-pts { font-weight:700; color:var(--accent); }
+    .ts-caret { font-size:10px; color:var(--muted); margin-left:5px; }
+    .ts-log { padding:10px 14px; background:var(--panel-2); }
+    .ts-log-row { display:flex; justify-content:space-between; align-items:center; padding:5px 0; font-size:11px; border-bottom:1px solid rgba(214,207,168,0.4); gap:8px; }
+    .ts-log-row:last-child { border-bottom:none; }
+    .ts-log-mn { color:var(--text); min-width:70px; }
+    .ts-log-mult { color:var(--muted); font-size:10px; margin-left:6px; }
+    .ts-log-boost { font-size:9px; font-weight:700; color:#8A5A00; background:#FBEFC9; border:1px solid #E9D28F; border-radius:4px; padding:1px 5px; white-space:nowrap; }
+    .ts-log-pts { font-weight:700; margin-left:auto; }
     #lbViewMeta { font-size: 11px; color: var(--muted); }
     /* Chart panel inside lb-body */
     #lbChartContent { padding: 16px 20px 20px; }
@@ -1311,12 +1337,14 @@
         <div class="lbv-pills">
           <button class="lbv-pill active" id="lbBtnTable">📋 Table</button>
           <button class="lbv-pill" id="lbBtnChart">📈 Progress</button>
+          <button class="lbv-pill" id="lbBtnStats">📊 Team Stats</button>
         </div>
         <span id="lbViewMeta"></span>
       </div>
       <div class="lb-body">
         <div id="lbContent"></div>
         <div id="lbChartContent" style="display:none"></div>
+        <div id="lbStatsContent" style="display:none"></div>
       </div>
     </div>
   </div>
@@ -3414,7 +3442,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     // expandedKeys: stable per-row keys ('sl_<squadId>' / 'daily_<teamId>') that are
     // currently expanded — re-opened automatically after each render so the detail
     // view survives the periodic live-refresh poll.
-    const lbState = { tab: 'daily', profiles: {}, matchId: null, expandedKeys: new Set(), pollTimer: null, view: 'table' };
+    const lbState = { tab: 'daily', profiles: {}, matchId: null, expandedKeys: new Set(), tsExpandedKeys: new Set(), pollTimer: null, view: 'table' };
     const ROLE_ORDER_LB = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
     async function openLeaderboard() {
@@ -3511,19 +3539,22 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       tabsRow.querySelectorAll('.lb-tab').forEach(t => {
         t.addEventListener('click', async () => {
           lbState.tab = t.dataset.lbtab;
-          // Reset to table view when switching to daily (no chart for single-match)
-          if (lbState.tab === 'daily' && lbState.view === 'chart') {
+          // Reset to table view when switching to daily (no chart/stats for single-match)
+          if (lbState.tab === 'daily' && (lbState.view === 'chart' || lbState.view === 'stats')) {
             lbState.view = 'table';
             const lbC = $('#lbContent');      if (lbC) lbC.style.display = '';
             const lbCh = $('#lbChartContent'); if (lbCh) lbCh.style.display = 'none';
+            const lbS = $('#lbStatsContent');  if (lbS) lbS.style.display = 'none';
             const bT = $('#lbBtnTable'); if (bT) bT.classList.add('active');
             const bC = $('#lbBtnChart'); if (bC) bC.classList.remove('active');
+            const bS = $('#lbBtnStats'); if (bS) bS.classList.remove('active');
           }
           renderLbTabs();
           renderLbPickers();
           await renderLeaderboard();
-          // Rebuild chart if it was already showing for the new tab
+          // Rebuild chart/stats if it was already showing for the new tab
           if (lbState.view === 'chart' && lbState.tab !== 'daily') buildLbChart();
+          if (lbState.view === 'stats' && lbState.tab !== 'daily') buildLbTeamStats();
           maybeStartLbPolling();
         });
       });
@@ -3897,12 +3928,16 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       lbState.view = v;
       const tableEl = $('#lbContent');
       const chartEl = $('#lbChartContent');
+      const statsEl = $('#lbStatsContent');
       if (tableEl) tableEl.style.display = v === 'table' ? '' : 'none';
       if (chartEl) chartEl.style.display = v === 'chart' ? '' : 'none';
-      const btnT = $('#lbBtnTable'), btnC = $('#lbBtnChart');
+      if (statsEl) statsEl.style.display = v === 'stats' ? '' : 'none';
+      const btnT = $('#lbBtnTable'), btnC = $('#lbBtnChart'), btnS = $('#lbBtnStats');
       if (btnT) btnT.classList.toggle('active', v === 'table');
       if (btnC) btnC.classList.toggle('active', v === 'chart');
+      if (btnS) btnS.classList.toggle('active', v === 'stats');
       if (v === 'chart' && lbState.tab !== 'daily') buildLbChart();
+      if (v === 'stats' && lbState.tab !== 'daily') buildLbTeamStats();
     }
 
     /** Fetch history data and render the SVG progress chart. */
@@ -3924,6 +3959,99 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       } catch (err) {
         chartEl.innerHTML = `<div class="lb-empty">Chart unavailable: ${err.message}</div>`;
       }
+    }
+
+    // ─── TEAM STATS (per-player, my squad only) ───────────────────────────────
+
+    /** Fetch this squad's by-player breakdown and render it into #lbStatsContent. */
+    async function buildLbTeamStats() {
+      const el = $('#lbStatsContent');
+      if (!el || !state.db) return;
+      el.innerHTML = '<div class="lb-empty" style="padding:24px 0;">Loading team stats…</div>';
+      const squadId = state.sl?.squad?.id;
+      if (!squadId) {
+        el.innerHTML = '<div class="lb-empty">No squad found — join this contest to see your Team Stats.</div>';
+        return;
+      }
+      try {
+        const stats = await state.db.getSquadTeamStats(squadId);
+        el.innerHTML = teamStatsTableHtml(stats);
+        wireTeamStatsExpand(el, stats);
+      } catch (err) {
+        el.innerHTML = `<div class="lb-empty">Team stats unavailable: ${err.message}</div>`;
+      }
+    }
+
+    /** Render the by-player leaderboard table (rank, matches in XI, points earned). */
+    function teamStatsTableHtml(stats) {
+      if (!stats || !stats.leaderboard || !stats.leaderboard.length) {
+        return '<div class="lb-empty">No scored matches yet — Team Stats will appear once your XI has played.</div>';
+      }
+      const rows = stats.leaderboard.map((p, i) => {
+        const key       = 'ts_' + p.player_id;
+        const detailId  = 'tsDetail_' + String(p.player_id).replace(/[^a-zA-Z0-9]/g, '');
+        const capBadge  = p.times_captain ? `<span class="ts-badge cap" title="Captain ${p.times_captain}×">C${p.times_captain > 1 ? '×' + p.times_captain : ''}</span>` : '';
+        const vcBadge   = p.times_vc      ? `<span class="ts-badge vc" title="Vice-Captain ${p.times_vc}×">VC${p.times_vc > 1 ? '×' + p.times_vc : ''}</span>`      : '';
+        return `<tr class="ts-row" data-key="${key}" data-detail="${detailId}">
+            <td class="ts-rank">${i + 1}</td>
+            <td><span class="ts-name">${escapeHtml(p.name)}</span><span class="ts-role">${escapeHtml(p.role || '')}</span>${capBadge}${vcBadge}<span class="ts-caret">▾</span></td>
+            <td class="r">${p.matches_in_xi}</td>
+            <td class="r ts-pts">${p.points_for_team}</td>
+          </tr>
+          <tr id="${detailId}" style="display:none;"><td colspan="4" class="ts-log"></td></tr>`;
+      }).join('');
+      return `
+        <div class="ts-summary">
+          <span>${stats.matchesPlayed} match${stats.matchesPlayed !== 1 ? 'es' : ''} played · ${stats.playersUsed} players used</span>
+          <span>Season total: <strong style="color:var(--accent);">${stats.seasonTotal}</strong></span>
+        </div>
+        <table class="ts-table">
+          <thead><tr><th></th><th>Player</th><th class="r">In XI</th><th class="r">Points</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    /** Tap-to-expand: reveal a player's match-by-match log (already fetched, no re-query). */
+    function wireTeamStatsExpand(container, stats) {
+      container.querySelectorAll('.ts-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const key       = row.dataset.key;
+          const detailRow = container.querySelector('#' + row.dataset.detail);
+          if (!detailRow) return;
+          const caret  = row.querySelector('.ts-caret');
+          const isOpen = lbState.tsExpandedKeys.has(key);
+          if (isOpen) {
+            lbState.tsExpandedKeys.delete(key);
+            detailRow.style.display = 'none';
+            if (caret) caret.textContent = '▾';
+            return;
+          }
+          lbState.tsExpandedKeys.add(key);
+          if (caret) caret.textContent = '▴';
+          detailRow.style.display = '';
+          const playerId = key.slice(3);
+          const player = stats.leaderboard.find(p => String(p.player_id) === playerId);
+          const cell = detailRow.querySelector('td');
+          if (cell && player) cell.innerHTML = teamStatsLogHtml(player);
+        });
+      });
+    }
+
+    /** Per-match log for one player: match #, C/VC tag, multiplier, booster (only if it actually affected them), points. */
+    function teamStatsLogHtml(player) {
+      if (!player.log || !player.log.length) return '<div style="color:var(--muted);font-size:11px;">No match log.</div>';
+      return [...player.log]
+        .sort((a, b) => (b.match_number || 0) - (a.match_number || 0))
+        .map(m => {
+          const roleTag   = m.is_captain ? ' (C)' : (m.is_vc ? ' (VC)' : '');
+          const boostMeta = m.booster ? getBoosterMeta(m.booster) : null;
+          const boostTag  = boostMeta ? `<span class="ts-log-boost">${iconHtml(boostMeta.icon, boostMeta.label)} ${escapeHtml(boostMeta.label)}</span>` : '';
+          return `<div class="ts-log-row">
+              <span class="ts-log-mn">M${m.match_number}${roleTag}<span class="ts-log-mult">×${m.multiplier}</span></span>
+              ${boostTag}
+              <span class="ts-log-pts">${m.total_points}</span>
+            </div>`;
+        }).join('');
     }
 
     /** Build and animate the SVG cumulative-points chart inside `container`. */
@@ -12407,6 +12535,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     });
     $('#lbBtnTable').addEventListener('click', () => setLbView('table'));
     $('#lbBtnChart').addEventListener('click', () => setLbView('chart'));
+    $('#lbBtnStats').addEventListener('click', () => setLbView('stats'));
 
     // ─── Page-level tabs (Contest / My Team / Season) ────────────────────────
     let activePageTab = 'home'; // default — Home on login
@@ -12917,6 +13046,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
               <div class="lbv-pills">
                 <button class="lbv-pill active" id="inlineBtnTable">📋 Table</button>
                 <button class="lbv-pill" id="inlineBtnChart">📈 Progress</button>
+                <button class="lbv-pill" id="inlineBtnStats">📊 Team Stats</button>
               </div>
               <span id="inlineLbMeta" style="font-size:11px;color:var(--muted);"></span>
             </div>
@@ -12951,20 +13081,34 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
                 <div id="${detailId}" style="grid-column:1/-1;display:none;border-bottom:1px solid var(--border);"></div>`;
             }).join('')}
           </div></div>
-            <div id="inlineLbChartView" style="display:none;"></div>`;
+            <div id="inlineLbChartView" style="display:none;"></div>
+            <div id="inlineLbStatsView" style="display:none;"></div>`;
           wireInlineLbExpand(content, null, contestId);
           document.getElementById('inlineBtnTable')?.addEventListener('click', () => {
             document.getElementById('inlineLbTableView').style.display = '';
             document.getElementById('inlineLbChartView').style.display = 'none';
+            document.getElementById('inlineLbStatsView').style.display = 'none';
             document.getElementById('inlineBtnTable').classList.add('active');
             document.getElementById('inlineBtnChart').classList.remove('active');
+            document.getElementById('inlineBtnStats').classList.remove('active');
           });
           document.getElementById('inlineBtnChart')?.addEventListener('click', () => {
             document.getElementById('inlineLbTableView').style.display = 'none';
             document.getElementById('inlineLbChartView').style.display = '';
+            document.getElementById('inlineLbStatsView').style.display = 'none';
             document.getElementById('inlineBtnTable').classList.remove('active');
             document.getElementById('inlineBtnChart').classList.add('active');
+            document.getElementById('inlineBtnStats').classList.remove('active');
             buildInlineChart(contestId);
+          });
+          document.getElementById('inlineBtnStats')?.addEventListener('click', () => {
+            document.getElementById('inlineLbTableView').style.display = 'none';
+            document.getElementById('inlineLbChartView').style.display = 'none';
+            document.getElementById('inlineLbStatsView').style.display = '';
+            document.getElementById('inlineBtnTable').classList.remove('active');
+            document.getElementById('inlineBtnChart').classList.remove('active');
+            document.getElementById('inlineBtnStats').classList.add('active');
+            buildInlineTeamStats(contestId);
           });
           return;
         }
@@ -13055,6 +13199,28 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         chartEl.dataset.built = contestId;
       } catch(err) {
         chartEl.innerHTML = `<div class="lb-empty">Chart unavailable: ${err.message}</div>`;
+      }
+    }
+
+    /** Inline-leaderboard counterpart to buildLbTeamStats() — same squad-scoped
+     *  by-player breakdown, rendered into #inlineLbStatsView instead of the modal. */
+    async function buildInlineTeamStats(contestId) {
+      const el = document.getElementById('inlineLbStatsView');
+      if (!el || !state.db) return;
+      if (el.dataset.built === contestId) return;  // already rendered for this contest
+      el.innerHTML = '<div class="lb-empty" style="padding:24px 0;">Loading team stats…</div>';
+      const squadId = state.sl?.squad?.id;
+      if (!squadId) {
+        el.innerHTML = '<div class="lb-empty">No squad found — join this contest to see your Team Stats.</div>';
+        return;
+      }
+      try {
+        const stats = await state.db.getSquadTeamStats(squadId);
+        el.innerHTML = teamStatsTableHtml(stats);
+        wireTeamStatsExpand(el, stats);
+        el.dataset.built = contestId;
+      } catch (err) {
+        el.innerHTML = `<div class="lb-empty">Team stats unavailable: ${err.message}</div>`;
       }
     }
 
