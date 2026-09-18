@@ -1,12 +1,17 @@
 /**
  * TeamStatsPlayerSheet — match-by-match log for one player within the
  * Leaderboard's Team Stats tab. Visually and structurally mirrors
- * PlayerStatsModal (same bottom-sheet Modal pattern, same header/table/
- * hairline-row styling) per the plan decision to keep this drilldown
- * consistent with how player detail already opens elsewhere in the app —
- * but it renders data it's handed (one TeamStatsPlayer's `log`, already
- * fetched by getSquadTeamStats) rather than running its own query, since
- * the whole Team Stats leaderboard is fetched once up front.
+ * PlayerStatsModal (same bottom-sheet Modal pattern, same Match/
+ * Performance/Pts table shape and hairline-row styling) per the plan
+ * decision to keep this drilldown consistent with how player detail
+ * already opens elsewhere in the app — including the batting/bowling/
+ * fielding breakdown per appearance, which the reviewed prototype's
+ * drilldown always showed (formatted with the same
+ * formatBattingLine/formatBowlingLine/formatFieldingLine PlayerStatsModal
+ * uses) — but it renders data it's handed (one TeamStatsPlayer's `log`,
+ * already fetched by getSquadTeamStats, batting/bowling/fielding included)
+ * rather than running its own query, since the whole Team Stats
+ * leaderboard is fetched once up front.
  */
 
 import React from 'react';
@@ -16,6 +21,9 @@ import {
 import { fontSize, radius, spacing } from '../theme';
 import { TeamStatsPlayer } from '../lib/teamStats';
 import { getBoosterMeta } from '../store/boosterStore';
+import {
+  formatBattingLine, formatBowlingLine, formatFieldingLine,
+} from '../lib/playerHistory';
 
 const C = {
   text:   '#1C1F26',
@@ -66,28 +74,40 @@ export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props
             <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
               <View style={styles.tableHeaderRow}>
                 <Text style={[styles.th, styles.colMatch]}>Match</Text>
-                <Text style={[styles.th, styles.colBoost]}>Booster</Text>
+                <Text style={[styles.th, styles.colPerf]}>Performance</Text>
                 <Text style={[styles.th, styles.colPts]}>Pts</Text>
               </View>
               {log.map(m => {
-                const roleTag  = m.isCaptain ? ' (C)' : (m.isVc ? ' (VC)' : '');
+                const roleTag   = m.isCaptain ? ' (C)' : (m.isVc ? ' (VC)' : '');
                 const boostMeta = m.booster ? getBoosterMeta(m.booster) : undefined;
+
+                const lines = [
+                  formatBattingLine(m.batting ?? null),
+                  formatBowlingLine(m.bowling ?? null),
+                  formatFieldingLine(m.fielding ?? null),
+                ].filter(Boolean);
+                // formatBattingLine always returns something ("Did not bat"
+                // when there's no batting row), so `lines` is only ever
+                // empty when this player has no batting/bowling/fielding
+                // row at all for the match (a genuine DNP) — same convention
+                // PlayerStatsModal uses for r.played === false.
+                const perf = lines.length ? lines.join('\n') : 'Did not contribute';
+
                 return (
                   <View key={m.matchId} style={styles.row}>
                     <View style={styles.colMatch}>
                       <Text style={styles.cellPrimary}>M{m.matchNumber ?? '?'}{roleTag}</Text>
-                      <Text style={styles.cellMuted}>×{m.multiplier}</Text>
                     </View>
-                    <View style={styles.colBoost}>
-                      {boostMeta ? (
+                    <Text style={[styles.cellPrimary, styles.colPerf]}>{perf}</Text>
+                    <View style={styles.colPts}>
+                      <Text style={styles.cellPts}>{m.totalPoints}</Text>
+                      <Text style={styles.cellMult}>{m.basePoints ?? 0} ×{m.multiplier}</Text>
+                      {boostMeta && (
                         <View style={styles.boostTag}>
-                          <Text style={styles.boostTagText}>{boostMeta.icon} {boostMeta.fullName}</Text>
+                          <Text style={styles.boostTagText}>{boostMeta.icon} {boostMeta.name}</Text>
                         </View>
-                      ) : (
-                        <Text style={styles.cellMuted}>—</Text>
                       )}
                     </View>
-                    <Text style={[styles.cellPts, styles.colPts]}>{m.totalPoints}</Text>
                   </View>
                 );
               })}
@@ -133,7 +153,7 @@ const styles = StyleSheet.create({
   center: { paddingVertical: spacing.xxl, alignItems: 'center' },
   emptyText: { color: C.muted, fontSize: fontSize.sm, textAlign: 'center' },
 
-  scroll: { maxHeight: 380 },
+  scroll: { maxHeight: 420 },
 
   tableHeaderRow: {
     flexDirection:     'row',
@@ -150,22 +170,23 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   colMatch: { flex: 1 },
-  colBoost: { flex: 1.4, justifyContent: 'center' },
-  colPts:   { width: 40, textAlign: 'right' },
+  colPerf:  { flex: 1.6 },
+  colPts:   { width: 62, alignItems: 'flex-end' },
 
   row: {
     flexDirection:     'row',
-    alignItems:        'center',
     paddingVertical:   spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(201,168,76,0.12)',
   },
   cellPrimary: { color: C.text, fontSize: fontSize.sm, lineHeight: 17, fontWeight: '600' },
   cellMuted:   { color: C.muted, fontSize: fontSize.xs, marginTop: 1 },
-  cellPts:     { color: C.text, fontSize: fontSize.sm, fontWeight: '700' },
+  cellPts:     { color: C.text, fontSize: fontSize.sm, fontWeight: '700', textAlign: 'right' },
+  cellMult:    { color: C.muted, fontSize: fontSize.xs, marginTop: 1, textAlign: 'right' },
 
   boostTag: {
-    alignSelf:          'flex-start',
+    alignSelf:          'flex-end',
+    marginTop:          3,
     backgroundColor:    C.boostBg,
     borderWidth:        1,
     borderColor:        C.boostBorder,

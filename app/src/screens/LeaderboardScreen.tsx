@@ -598,7 +598,13 @@ function EntryRow({ entry, onPress, showSlCols }: EntryRowProps) {
   );
 }
 
-function TeamStatsRow({ player, rank, onPress }: { player: TeamStatsPlayer; rank: number; onPress: () => void }) {
+function TeamStatsRow({ player, rank, seasonTotal, onPress }: { player: TeamStatsPlayer; rank: number; seasonTotal: number; onPress: () => void }) {
+  // Share of squad total — magnitude encoding, single hue (dataviz skill).
+  // *3.2 amplifies the bar for readability, matching the reviewed
+  // prototype: real shares rarely exceed ~30%, so a literal 1:1 scale reads
+  // as mostly-empty bars.
+  const sharePct = seasonTotal > 0 ? Math.max(0, (player.pointsForTeam / seasonTotal) * 100) : 0;
+
   return (
     <Pressable
       style={({ pressed }) => [styles.tsRowWrap, pressed && styles.rowPressed]}
@@ -627,10 +633,16 @@ function TeamStatsRow({ player, rank, onPress }: { player: TeamStatsPlayer; rank
             {player.matchesInXi} match{player.matchesInXi !== 1 ? 'es' : ''} in XI
           </Text>
         </View>
-        <Text style={styles.pts}>
-          {player.pointsForTeam.toLocaleString()}
-          <Text style={styles.ptsSuffix}> pts</Text>
-        </Text>
+        <View style={styles.tsPtsBlock}>
+          <Text style={styles.pts}>
+            {player.pointsForTeam.toLocaleString()}
+            <Text style={styles.ptsSuffix}> pts</Text>
+          </Text>
+          <View style={styles.tsShareTrack}>
+            <View style={[styles.tsShareFill, { width: `${Math.min(100, sharePct * 3.2).toFixed(1)}%` as any }]} />
+          </View>
+          <Text style={styles.tsSharePct}>{sharePct.toFixed(1)}%</Text>
+        </View>
         <Text style={styles.rowArrow}>›</Text>
       </View>
     </Pressable>
@@ -965,7 +977,7 @@ export default function LeaderboardScreen({ route }: Props) {
                 </Text>
               </View>
               {teamStats.leaderboard.map((p, i) => (
-                <TeamStatsRow key={p.playerId} player={p} rank={i + 1} onPress={() => setStatsPlayer(p)} />
+                <TeamStatsRow key={p.playerId} player={p} rank={i + 1} seasonTotal={teamStats.seasonTotal} onPress={() => setStatsPlayer(p)} />
               ))}
             </>
           )}
@@ -1287,6 +1299,12 @@ const styles = StyleSheet.create({
   tsBadgeVc:  { backgroundColor: 'rgba(45,106,53,0.15)' },
   tsBadgeText: { fontSize: 9, fontWeight: '700', color: C.gold },
   tsBadgeTextVc: { fontSize: 9, fontWeight: '700', color: C.good },
+
+  // Share-of-squad-total bar — single-hue magnitude encoding (dataviz skill)
+  tsPtsBlock:   { width: 62, alignItems: 'flex-end' },
+  tsShareTrack: { width: '100%', height: 5, borderRadius: 99, backgroundColor: 'rgba(0,0,0,0.06)', overflow: 'hidden', marginTop: 4 },
+  tsShareFill:  { height: '100%', borderRadius: 99, backgroundColor: C.accent },
+  tsSharePct:   { color: C.muted, fontSize: 9, marginTop: 2 },
 
   // ── Team Detail Modal ─────────────────────────────────────────────────────
 

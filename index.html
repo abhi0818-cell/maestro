@@ -870,12 +870,30 @@
     .ts-badge.vc  { background:rgba(37,99,235,0.15); color:#2563EB; }
     .ts-pts { font-weight:700; color:var(--accent); }
     .ts-caret { font-size:10px; color:var(--muted); margin-left:5px; }
+
+    /* Share-of-squad-total bar — single-hue magnitude encoding (dataviz skill) */
+    .ts-share-cell { min-width:56px; }
+    .ts-share-track { background:var(--panel-2); border-radius:99px; height:6px; width:100%; overflow:hidden; }
+    .ts-share-fill { background:var(--accent); height:100%; border-radius:99px; }
+    .ts-share-pct { font-size:10px; color:var(--muted); margin-top:3px; text-align:right; }
+
     .ts-log { padding:10px 14px; background:var(--panel-2); }
-    .ts-log-row { display:flex; justify-content:space-between; align-items:center; padding:5px 0; font-size:11px; border-bottom:1px solid rgba(214,207,168,0.4); gap:8px; }
-    .ts-log-row:last-child { border-bottom:none; }
-    .ts-log-mn { color:var(--text); min-width:70px; }
-    .ts-log-mult { color:var(--muted); font-size:10px; margin-left:6px; }
-    .ts-log-boost { font-size:9px; font-weight:700; color:#8A5A00; background:#FBEFC9; border:1px solid #E9D28F; border-radius:4px; padding:1px 5px; white-space:nowrap; }
+    .ts-log-title { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin:2px 0 8px; }
+    table.ts-mlog { width:100%; table-layout:fixed; border-collapse:collapse; font-size:11px; }
+    .ts-mlog th { text-align:left; font-size:9px; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); padding:0 8px 5px 0; font-weight:700; }
+    .ts-mlog th:last-child, .ts-mlog td:last-child { text-align:right; padding-right:0; }
+    .ts-mlog td { padding:6px 8px 6px 0; border-top:1px solid var(--border); vertical-align:top; overflow-wrap:break-word; }
+    .ts-mlog th:nth-child(1), .ts-mlog td:nth-child(1) { width:34%; }
+    .ts-mlog th:nth-child(2), .ts-mlog td:nth-child(2) { width:38%; }
+    .ts-mlog th:nth-child(3), .ts-mlog td:nth-child(3) { width:28%; }
+    .ts-mlog .m-opp { font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .ts-mlog .m-date { color:var(--muted); font-size:10px; }
+    .ts-mlog .m-perf div { line-height:1.5; }
+    .ts-mlog .m-perf .dnp { color:var(--muted); font-style:italic; }
+    .ts-mlog .m-pts { font-weight:700; color:var(--accent); font-variant-numeric:tabular-nums; }
+    .ts-mlog .m-pts.neg { color:var(--bad); }
+    .ts-mlog .m-mult { font-size:9.5px; color:var(--muted); font-weight:500; margin-top:1px; }
+    .ts-log-boost { font-size:9px; font-weight:700; color:#8A5A00; background:#FBEFC9; border:1px solid #E9D28F; border-radius:4px; padding:1px 4px; margin-top:3px; display:inline-block; white-space:nowrap; }
     .ts-log-pts { font-weight:700; margin-left:auto; }
     #lbViewMeta { font-size: 11px; color: var(--muted); }
     /* Chart panel inside lb-body */
@@ -3987,18 +4005,26 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       if (!stats || !stats.leaderboard || !stats.leaderboard.length) {
         return '<div class="lb-empty">No scored matches yet — Team Stats will appear once your XI has played.</div>';
       }
+      const seasonTotal = Number(stats.seasonTotal) || 0;
       const rows = stats.leaderboard.map((p, i) => {
         const key       = 'ts_' + p.player_id;
         const detailId  = 'tsDetail_' + String(p.player_id).replace(/[^a-zA-Z0-9]/g, '');
         const capBadge  = p.times_captain ? `<span class="ts-badge cap" title="Captain ${p.times_captain}×">C${p.times_captain > 1 ? '×' + p.times_captain : ''}</span>` : '';
         const vcBadge   = p.times_vc      ? `<span class="ts-badge vc" title="Vice-Captain ${p.times_vc}×">VC${p.times_vc > 1 ? '×' + p.times_vc : ''}</span>`      : '';
+        // Share of squad total — magnitude encoding, single hue (dataviz skill).
+        // *3.2 amplifies the bar for readability, matching the reviewed prototype:
+        // real shares rarely exceed ~30%, so a literal 1:1 scale reads as mostly-empty bars.
+        const pct   = seasonTotal > 0 ? Math.max(0, (p.points_for_team / seasonTotal) * 100) : 0;
+        const share = `<div class="ts-share-cell"><div class="ts-share-track"><div class="ts-share-fill" style="width:${Math.min(100, pct * 3.2).toFixed(1)}%"></div></div>` +
+          `<div class="ts-share-pct">${pct.toFixed(1)}%</div></div>`;
         return `<tr class="ts-row" data-key="${key}" data-detail="${detailId}">
             <td class="ts-rank">${i + 1}</td>
             <td><span class="ts-name">${escapeHtml(p.name)}</span><span class="ts-role">${escapeHtml(p.role || '')}</span>${capBadge}${vcBadge}<span class="ts-caret">▾</span></td>
             <td class="r">${p.matches_in_xi}</td>
             <td class="r ts-pts">${p.points_for_team}</td>
+            <td>${share}</td>
           </tr>
-          <tr id="${detailId}" style="display:none;"><td colspan="4" class="ts-log"></td></tr>`;
+          <tr id="${detailId}" style="display:none;"><td colspan="5" class="ts-log"></td></tr>`;
       }).join('');
       return `
         <div class="ts-summary">
@@ -4006,7 +4032,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           <span>Season total: <strong style="color:var(--accent);">${stats.seasonTotal}</strong></span>
         </div>
         <table class="ts-table">
-          <thead><tr><th></th><th>Player</th><th class="r">In XI</th><th class="r">Points</th></tr></thead>
+          <thead><tr><th></th><th>Player</th><th class="r">In XI</th><th class="r">Points</th><th>Share</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
     }
@@ -4037,21 +4063,50 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       });
     }
 
-    /** Per-match log for one player: match #, C/VC tag, multiplier, booster (only if it actually affected them), points. */
+    /** Per-match log for one player: opponent + match #, batting/bowling/fielding
+     * breakdown (same formatters PlayerStatsModal uses), and points with the
+     * base×multiplier + booster tag (only when it actually affected them) —
+     * mirrors the reviewed prototype's Match / Performance / Pts drilldown. */
     function teamStatsLogHtml(player) {
       if (!player.log || !player.log.length) return '<div style="color:var(--muted);font-size:11px;">No match log.</div>';
-      return [...player.log]
+      const rows = [...player.log]
         .sort((a, b) => (b.match_number || 0) - (a.match_number || 0))
         .map(m => {
-          const roleTag   = m.is_captain ? ' (C)' : (m.is_vc ? ' (VC)' : '');
+          const oppTeam = m.home_team_id === player.team_id ? m.away_team_id
+            : (m.away_team_id === player.team_id ? m.home_team_id : (m.home_team_id || m.away_team_id));
+          const dateStr = m.played_on
+            ? new Date(m.played_on + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            : '';
+
+          const lines = [];
+          const batLine = formatBattingLine(m.batting);
+          const bwlLine = formatBowlingLine(m.bowling);
+          const fldLine = formatFieldingLine(m.fielding);
+          if (batLine) lines.push(escapeHtml(batLine));
+          if (bwlLine) lines.push(escapeHtml(bwlLine));
+          if (fldLine) lines.push(escapeHtml(fldLine));
+          const perf = lines.length
+            ? lines.map(l => `<div>${l}</div>`).join('')
+            : '<div class="dnp">Did not contribute</div>';
+
+          const roleTag   = m.is_captain ? ' <span style="color:var(--accent);">👑</span>' : (m.is_vc ? ' Ⓥ' : '');
           const boostMeta = m.booster ? getBoosterMeta(m.booster) : null;
-          const boostTag  = boostMeta ? `<span class="ts-log-boost">${iconHtml(boostMeta.icon, boostMeta.label)} ${escapeHtml(boostMeta.label)}</span>` : '';
-          return `<div class="ts-log-row">
-              <span class="ts-log-mn">M${m.match_number}${roleTag}<span class="ts-log-mult">×${m.multiplier}</span></span>
-              ${boostTag}
-              <span class="ts-log-pts">${m.total_points}</span>
-            </div>`;
+          const boostTag  = boostMeta ? `<div class="ts-log-boost">${iconHtml(boostMeta.icon, boostMeta.label)} ${escapeHtml(boostMeta.label)}</div>` : '';
+          const mult = Number(m.multiplier ?? 1);
+          const pts  = Number(m.total_points ?? 0);
+
+          return `<tr>
+              <td><div class="m-opp">vs ${escapeHtml(oppTeam || '?')}</div><div class="m-date">M${m.match_number}${dateStr ? ' · ' + dateStr : ''}</div></td>
+              <td class="m-perf">${perf}</td>
+              <td class="tabular" style="text-align:right;">
+                <div class="m-pts${pts < 0 ? ' neg' : ''}">${pts}</div>
+                <div class="m-mult">${m.base_points ?? 0} ×${mult.toFixed(mult % 1 ? 1 : 0)}${roleTag}</div>
+                ${boostTag}
+              </td>
+            </tr>`;
         }).join('');
+      return `<div class="ts-log-title">Match-by-match · ${player.log.length} in XI</div>` +
+        `<table class="ts-mlog"><thead><tr><th>Match</th><th>Performance</th><th>Pts</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
 
     /** Build and animate the SVG cumulative-points chart inside `container`. */

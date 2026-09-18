@@ -5,15 +5,18 @@
  *
  * Ported from db.js's getSquadTeamStats(squadId) (web) — same query shape
  * (v_match_xi_with_scores, tournament-scoped via squad_id, already
- * booster-aware total_points) and the same "boosted" rule (compare the
- * actual multiplier against the plain captain/VC rate) so a player is only
- * ever tagged with a booster when it actually changed their score. This is
- * an independent, self-contained query rather than a reuse of
- * getSquadSeasonHistory() in this same directory — that function recomputes
- * a full bat/bowl/field/bonus breakdown per match (for the match-drilldown
- * screen) which Team Stats doesn't need; re-shaping its heavier output would
- * cost more than just re-querying the same view directly, the way db.js's
- * version re-shapes getSquadSeason()'s lighter output instead.
+ * booster-aware total_points), the same "boosted" rule (compare the actual
+ * multiplier against the plain captain/VC rate) so a player is only ever
+ * tagged with a booster when it actually changed their score, and — per
+ * the reviewed prototype's match-by-match drilldown, which shows a
+ * batting/bowling/fielding breakdown per appearance, not just points — the
+ * same extra join against `player_match_stats` web's version already got
+ * for free via getSquadSeason(). This is still an independent,
+ * self-contained query rather than a reuse of getSquadSeasonHistory() in
+ * this same directory: that function additionally recomputes bat/bowl/
+ * field/bonus POINT subtotals client-side (for the existing matchweek
+ * screen's per-category numbers) which Team Stats doesn't need — it only
+ * needs the raw stat line to format, not to re-derive points from.
  *
  * NOTE on cross-platform sharing: this logic is intentionally duplicated
  * here rather than imported from a shared file. Despite scoringEngine.shared.js's
@@ -25,7 +28,7 @@
  */
 
 import { supabase } from './supabase';
-import { PlayerRole } from '../types';
+import { PlayerRole, BattingInnings, BowlingSpell, FieldingStats } from '../types';
 
 export type TeamStatsLogEntry = {
   matchId: string;
@@ -46,6 +49,14 @@ export type TeamStatsLogEntry = {
    * only set when `boosted` is true. Look up display metadata via
    * getBoosterMeta() from '../store/boosterStore'. */
   booster: string | null;
+  /** Raw batting/bowling/fielding stat lines for this appearance — format
+   * with formatBattingLine/formatBowlingLine/formatFieldingLine from
+   * '../lib/playerHistory' (same formatters PlayerStatsModal uses) for the
+   * drilldown's Performance column. undefined when this player has no
+   * player_match_stats row for the match (DNP). */
+  batting?: BattingInnings;
+  bowling?: BowlingSpell;
+  fielding?: FieldingStats;
 };
 
 export type TeamStatsPlayer = {
@@ -80,6 +91,7 @@ export async function getSquadTeamStats(squadId: string): Promise<SquadTeamStats
   if (!xiRows?.length) return empty;
 
   const playerIds = [...new Set(xiRows.map((r: any) => r.player_id))];
+  const matchIds  = [...new Set(xiRows.map((r: any) => r.match_id))];
 
   // Real role from `players`, not the (possibly hardcoded-'bat') value stored
   // on user_match_xi — same caveat/fix as db.js's getSquadSeason and mobile's
@@ -92,6 +104,22 @@ export async function getSquadTeamStats(squadId: string): Promise<SquadTeamStats
       .in('id', playerIds);
     if (e2) throw e2;
     (roleRows || []).forEach((p: any) => { roleById[p.id] = p.role; });
+  }
+
+  // Itemized batting/bowling/fielding for every match/player combo in this
+  // squad's season — same join getSquadSeason() does on web, needed here for
+  // the drilldown's Performance column (see the reviewed prototype).
+  const statIdx: Record<string, Record<string, any>> = {};
+  if (matchIds.length && playerIds.length) {
+    const { data: statRows, error: e4 } = await supabase
+      .from('player_match_stats')
+      .select('match_id, player_id, batting, bowling, fielding')
+      .in('match_id', matchIds)
+      .in('player_id', playerIds);
+    if (e4) throw e4;
+    (statRows || []).forEach((s: any) => {
+      (statIdx[s.match_id] ??= {})[s.player_id] = s;
+    });
   }
 
   const { data: boosterRows, error: e3 } = await supabase
@@ -130,6 +158,7 @@ export async function getSquadTeamStats(squadId: string): Promise<SquadTeamStats
     const mult = Number(r.multiplier ?? 1);
     const plainMult = r.is_captain ? 2 : (r.is_vc ? 1.5 : 1);
     const boosted = Math.abs(mult - plainMult) > 0.01;
+    const st = statIdx[r.match_id]?.[r.player_id];
 
     rec.log.push({
       matchId: r.match_id,
@@ -144,6 +173,9 @@ export async function getSquadTeamStats(squadId: string): Promise<SquadTeamStats
       totalPoints: Number(r.total_points ?? 0),
       boosted,
       booster: boosted ? (boosterByMatch[r.match_id] || null) : null,
+      batting: st?.batting ?? undefined,
+      bowling: st?.bowling ?? undefined,
+      fielding: st?.fielding ?? undefined,
     });
   });
 
