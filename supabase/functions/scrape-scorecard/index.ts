@@ -1666,6 +1666,20 @@ Deno.serve(async (req: Request) => {
       }
 
       // ── 9. Persist unmatched names so admin can reconcile ─────────────────
+      // The (tournament_id, raw_name, source) unique key has no match_id in
+      // it, so ignoreDuplicates alone silently no-ops once a raw name has
+      // ever been resolved for this tournament+source — even if it fails to
+      // resolve again later, for a completely different match. That's how
+      // Shadrack Descarte's batting line vanished for M35: "Sadrack
+      // Descartes"/cricketaddictor had already been flagged-and-resolved
+      // from an earlier match, so the fresh M35 failure never created (or
+      // reopened) a Review-tab row — it just silently dropped his stats.
+      // Fix: insert-if-new as before, then explicitly REOPEN any existing
+      // row for this raw_name/source that's already marked resolved,
+      // pointing it at the current match/context. A still-PENDING row is
+      // left untouched (no spam across every match a chronic miss appears
+      // in) — only a previously-solved one that's failing again gets
+      // resurfaced.
       if (unmatched.length) {
         const { error: umErr } = await sb.from('scraper_unmatched').upsert(
           unmatched.map(u => ({
@@ -1678,6 +1692,16 @@ Deno.serve(async (req: Request) => {
           { onConflict: 'tournament_id,raw_name,source', ignoreDuplicates: true },
         )
         if (umErr) console.error(`[${match.id}] scraper_unmatched upsert failed:`, umErr.message)
+
+        for (const u of unmatched) {
+          const { error: reopenErr } = await sb.from('scraper_unmatched')
+            .update({ match_id: match.id, context: u.context, resolved_at: null, resolved_by: null })
+            .eq('tournament_id', tournament.id)
+            .eq('source', source)
+            .eq('raw_name', u.name)
+            .not('resolved_at', 'is', null)
+          if (reopenErr) console.error(`[${match.id}] scraper_unmatched reopen failed for "${u.name}":`, reopenErr.message)
+        }
       }
 
       // ── 9a. Persist recoverable placeholder stats ──────────────────────────

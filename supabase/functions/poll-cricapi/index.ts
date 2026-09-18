@@ -855,11 +855,29 @@ Deno.serve(async (req: Request) => {
           { onConflict: 'alias,source,tournament_id', ignoreDuplicates: true },
         )
       }
+      // See scrape-scorecard/index.ts step 9 for why this needs a reopen
+      // pass: the (tournament_id, raw_name, source) key has no match_id, so
+      // ignoreDuplicates alone silently no-ops once a raw name has ever been
+      // resolved for this tournament+source — even when it fails to resolve
+      // again later for a different match. Insert-if-new, then reopen any
+      // existing row that's already resolved (leaving still-pending rows
+      // untouched, so a chronic miss doesn't spam a new row per match).
       if (unmatched.length) {
-        await sb.from('scraper_unmatched').upsert(
+        const { error: umErr } = await sb.from('scraper_unmatched').upsert(
           unmatched.map(u => ({ tournament_id: match.tournament_id, match_id: match.id, raw_name: u.name, source: 'cricapi', context: u.context })),
           { onConflict: 'tournament_id,raw_name,source', ignoreDuplicates: true },
         )
+        if (umErr) console.error(`[${match.id}] scraper_unmatched upsert failed:`, umErr.message)
+
+        for (const u of unmatched) {
+          const { error: reopenErr } = await sb.from('scraper_unmatched')
+            .update({ match_id: match.id, context: u.context, resolved_at: null, resolved_by: null })
+            .eq('tournament_id', match.tournament_id)
+            .eq('source', 'cricapi')
+            .eq('raw_name', u.name)
+            .not('resolved_at', 'is', null)
+          if (reopenErr) console.error(`[${match.id}] scraper_unmatched reopen failed for "${u.name}":`, reopenErr.message)
+        }
       }
       // Placeholder rows are keyed per match+context (not per tournament like
       // scraper_unmatched above) — every match's "Player Not Found" needs its
