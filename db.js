@@ -94,13 +94,25 @@ async function fetchAllRows(pageFn, pageSize = 1000) {
 function pickCurrentMatchNumber(matches) {
   const now = Date.now();
   const effTime = m => m.lock_time ?? m.start_time ?? null;
+  // A completed/abandoned/cancelled match is over and must never be treated
+  // as "live" or "upcoming" — mirrors index.html's isMatchOver(). Without
+  // this exclusion, an old abandoned match (e.g. a called-off fixture from
+  // the league stage) has status !== 'completed' and an effective time in
+  // the past, so the "live" search below matched it first — since withTime
+  // is sorted ascending and .find() returns the earliest hit, that stale
+  // abandoned match permanently won over every match after it, freezing
+  // the perceived "current match" back in the league stage even once the
+  // season had moved into the playoffs. That's what made the leaderboard's
+  // phase-aware transfer budget (see getLeaderboardSL below) keep counting
+  // against the league-stage cap instead of switching to the playoff cap.
+  const isMatchOver = m => m.status === 'completed' || m.status === 'abandoned' || m.status === 'cancelled';
   const withTime = (matches || [])
     .map(m => ({ m, t: effTime(m) ? new Date(effTime(m)).getTime() : null }))
     .filter(x => x.t !== null)
     .sort((a, b) => a.t - b.t);
-  const live = withTime.find(x => x.m.status !== 'completed' && x.t <= now);
+  const live = withTime.find(x => !isMatchOver(x.m) && x.t <= now);
   if (live) return live.m.match_number ?? null;
-  const upcoming = withTime.find(x => x.t > now && x.m.status !== 'completed');
+  const upcoming = withTime.find(x => x.t > now && !isMatchOver(x.m));
   if (upcoming) return upcoming.m.match_number ?? null;
   let maxMn = null;
   (matches || []).forEach(m => {
