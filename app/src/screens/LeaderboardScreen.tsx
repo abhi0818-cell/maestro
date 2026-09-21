@@ -651,6 +651,65 @@ function TeamStatsRow({ player, rank, seasonTotal, onPress }: { player: TeamStat
   );
 }
 
+const HIGHLIGHT_TILE_ORDER = ['century', 'half_century', 'duck', 'five_wkt', 'four_wkt', 'three_wkt', 'maiden', 'hattrick', 'three_catches', 'stumping', 'direct_runout', 'indirect_runout'] as const;
+const HIGHLIGHT_TILE_META: Record<string, { icon: string; label: string }> = {
+  century:         { icon: '💯', label: 'Centuries' },
+  half_century:    { icon: '🏏', label: 'Half-centuries' },
+  duck:            { icon: '🦆', label: 'Ducks' },
+  five_wkt:        { icon: '🔥', label: '5-wkt hauls' },
+  four_wkt:        { icon: '🎯', label: '4-wkt hauls' },
+  three_wkt:       { icon: '👌', label: '3-wkt hauls' },
+  maiden:          { icon: '0️⃣', label: 'Maidens' },
+  hattrick:        { icon: '🎩', label: 'Hat-tricks' },
+  three_catches:   { icon: '🙌', label: '3-catch games' },
+  stumping:        { icon: '🧤', label: 'Stumpings' },
+  direct_runout:   { icon: '💥', label: 'Run outs' },
+  indirect_runout: { icon: '🤝', label: 'Assists' },
+};
+
+/** Tally how many highlight entries carry each tag key, e.g. {century: 2, duck: 3, ...}. */
+function tallyHighlightTags(highlights: SquadHighlight[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  highlights.forEach(h => h.tags.forEach(t => { counts[t.key] = (counts[t.key] || 0) + 1; }));
+  return counts;
+}
+
+/** "Season highlights at a glance" tile grid (Option B) — one tile per tag that
+ * actually occurred; a tile only renders when its count is > 0, so e.g.
+ * hat-trick only shows up once someone on the squad actually takes one.
+ * Tapping a tile selects/deselects it; the caller renders the filtered
+ * detail list below (tap-to-drill-in, mirrors the web build). */
+function HighlightTiles({ highlights, selectedTag, onSelectTag }: {
+  highlights: SquadHighlight[];
+  selectedTag: string | null;
+  onSelectTag: (tag: string | null) => void;
+}) {
+  const counts = tallyHighlightTags(highlights);
+  const tiles = HIGHLIGHT_TILE_ORDER.filter(key => counts[key] > 0);
+  return (
+    <View style={styles.hlTileCard}>
+      <Text style={styles.hlTileTitle}>Season highlights at a glance</Text>
+      <View style={styles.hlTileGrid}>
+        {tiles.map(key => {
+          const meta = HIGHLIGHT_TILE_META[key];
+          const active = selectedTag === key;
+          return (
+            <Pressable
+              key={key}
+              style={[styles.hlTile, active && styles.hlTileActive]}
+              onPress={() => onSelectTag(active ? null : key)}
+            >
+              <Text style={styles.hlTileIcon}>{meta.icon}</Text>
+              <Text style={styles.hlTileNum}>{counts[key]}</Text>
+              <Text style={styles.hlTileLabel}>{meta.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function HighlightRow({ h }: { h: SquadHighlight }) {
   const oppTeamId = h.homeTeamId === h.teamId ? h.awayTeamId
     : (h.awayTeamId === h.teamId ? h.homeTeamId : (h.homeTeamId || h.awayTeamId));
@@ -736,6 +795,7 @@ export default function LeaderboardScreen({ route }: Props) {
   const [highlights,        setHighlights]        = useState<SquadHighlight[] | null>(null);
   const [highlightsLoading, setHighlightsLoading]  = useState(false);
   const [highlightsError,   setHighlightsError]    = useState<string | null>(null);
+  const [selectedHighlightTag, setSelectedHighlightTag] = useState<string | null>(null);  // which tile is drilled into, if any
 
   // ── Daily-only state ────────────────────────────────────────────────────────
   // Daily has no persistent squad, so it ranks ONE match at a time (mirrors
@@ -832,6 +892,7 @@ export default function LeaderboardScreen({ route }: Props) {
       setChartHistory(null);
       setTeamStats(null);
       setHighlights(null);
+      setSelectedHighlightTag(null);
     }
   }, [isDailyTab]);
 
@@ -872,6 +933,7 @@ export default function LeaderboardScreen({ route }: Props) {
   useEffect(() => {
     if (viewMode !== 'highlights' || isDailyTab) return;
     const squadId = myEntry?.squadId;
+    setSelectedHighlightTag(null);
     if (!squadId) { setHighlights(null); return; }
     setHighlightsLoading(true);
     setHighlightsError(null);
@@ -1063,9 +1125,33 @@ export default function LeaderboardScreen({ route }: Props) {
               No milestone performances yet — centuries, wicket hauls, and other feats from your XI will show up here.
             </Text>
           ) : (
-            highlights.map((h, i) => (
-              <HighlightRow key={`${h.matchId}_${h.playerId}_${i}`} h={h} />
-            ))
+            <>
+              <HighlightTiles
+                highlights={highlights}
+                selectedTag={selectedHighlightTag}
+                onSelectTag={setSelectedHighlightTag}
+              />
+              {selectedHighlightTag && (() => {
+                const meta = HIGHLIGHT_TILE_META[selectedHighlightTag];
+                const filtered = highlights.filter(h => h.tags.some(t => t.key === selectedHighlightTag));
+                return (
+                  <>
+                    <View style={styles.hlDetailHeader}>
+                      <Text style={styles.hlDetailTitle}>
+                        {meta.icon} {meta.label}
+                        <Text style={styles.hlDetailCount}> ({filtered.length})</Text>
+                      </Text>
+                      <Pressable onPress={() => setSelectedHighlightTag(null)} hitSlop={8}>
+                        <Text style={styles.hlDetailClose}>✕</Text>
+                      </Pressable>
+                    </View>
+                    {filtered.map((h, i) => (
+                      <HighlightRow key={`${h.matchId}_${h.playerId}_${i}`} h={h} />
+                    ))}
+                  </>
+                );
+              })()}
+            </>
           )}
         </ScrollView>
       ) : (
@@ -1422,6 +1508,53 @@ const styles = StyleSheet.create({
     paddingVertical:   2,
   },
   hlBadgeText: { color: '#8A5A00', fontSize: 9, fontWeight: '700' },
+
+  // Team Highlights tile grid (Option B) — counts at a glance, tap a tile
+  // to drill into that category's detail list below.
+  hlTileCard: {
+    marginBottom: spacing.sm,
+  },
+  hlTileTitle: {
+    color: C.muted,
+    fontSize: 10.5,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+  },
+  hlTileGrid: {
+    flexDirection: 'row',
+    flexWrap:      'wrap',
+    gap:           spacing.sm,
+  },
+  hlTile: {
+    width:           '31%',
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    borderWidth:     1,
+    borderColor:     C.border,
+    borderRadius:    radius.lg,
+    paddingVertical: spacing.sm,
+    alignItems:      'center',
+    ...shadow.card,
+  },
+  hlTileActive: {
+    borderColor:     C.accent,
+    backgroundColor: '#FBEFC9',
+  },
+  hlTileIcon:  { fontSize: fontSize.md },
+  hlTileNum:   { color: C.text, fontSize: fontSize.xl, fontWeight: '800', marginTop: 2 },
+  hlTileLabel: { color: C.muted, fontSize: 9, fontWeight: '600', marginTop: 2, textAlign: 'center' },
+
+  hlDetailHeader: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    justifyContent: 'space-between',
+    marginTop:      spacing.sm,
+    marginBottom:   spacing.sm,
+  },
+  hlDetailTitle: { color: C.text, fontSize: fontSize.sm, fontWeight: '700' },
+  hlDetailCount: { color: C.muted, fontWeight: '500' },
+  hlDetailClose: { color: C.muted, fontSize: fontSize.md, fontWeight: '700', paddingHorizontal: 6, paddingVertical: 2 },
 
   // ── Team Detail Modal ─────────────────────────────────────────────────────
 
