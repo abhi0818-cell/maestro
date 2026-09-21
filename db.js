@@ -183,9 +183,11 @@ function resolvePhaseWindow(targetMatchNumber, allMatches, startMatchNumber, pla
  * batting/bowling/fielding stat objects Team Stats' match log already
  * carries per entry (player_match_stats' raw shape, formatted for display
  * by formatBattingLine/formatBowlingLine/formatFieldingLine elsewhere).
- * Pure and stateless — hat-tricks are NOT derivable from this shape alone
- * (no ball-by-ball sequence is stored), so getSquadHighlights layers those
- * on separately from the admin-confirmed potential_hattricks table.
+ * Pure and stateless. Hat-tricks come from bowling.hattrick — the scraper
+ * flags any 3+ wicket haul as a "potential" hat-trick in potential_hattricks,
+ * but that flag only gets written back onto this same player_match_stats
+ * row (bowling.hattrick = true) once an admin manually confirms it via the
+ * web Review tab, so it's already right here — no separate query needed.
  *
  * @param {object|null} batting
  * @param {object|null} bowling
@@ -217,6 +219,9 @@ function deriveHighlightTags(batting, bowling, fielding) {
     }
     if (Number(bowling.maidens ?? 0) >= 1) {
       tags.push({ key: 'maiden', icon: '0️⃣', label: 'Maiden' });
+    }
+    if (bowling.hattrick === true) {
+      tags.push({ key: 'hattrick', icon: '🎩', label: 'Hat-trick' });
     }
   }
 
@@ -5595,9 +5600,8 @@ export function createDb(cfg = {}) {
      * put in while actually in the locked XI. Reuses getSquadTeamStats' own
      * fetch (same tournament-scoped v_match_xi_with_scores + player_match_stats
      * join, already filtered to matches the player's team actually played)
-     * instead of re-querying, then layers on the one thing that data alone
-     * can't answer — hat-tricks, which need ball-by-ball sequence info this
-     * app doesn't store — from the admin-confirmed potential_hattricks table.
+     * instead of re-querying — deriveHighlightTags pulls hat-tricks straight
+     * off that same data (bowling.hattrick), so no second query is needed.
      *
      * @param {string} squadId
      * @returns {Promise<{highlights: Array<{match_id, match_number, played_on,
@@ -5608,29 +5612,10 @@ export function createDb(cfg = {}) {
       const stats = await this.getSquadTeamStats(squadId);
       if (!stats.leaderboard.length) return { highlights: [] };
 
-      const matchIds = [...new Set(
-        stats.leaderboard.flatMap(p => p.log.map(m => m.match_id))
-      )];
-
-      const sb = await getClient();
-      const confirmedHattricks = new Set();
-      if (matchIds.length) {
-        const { data, error } = await sb
-          .from('potential_hattricks')
-          .select('match_id, player_id')
-          .eq('resolved_by', 'confirmed')
-          .in('match_id', matchIds);
-        if (error) throw error;
-        (data || []).forEach(h => confirmedHattricks.add(`${h.match_id}:${h.player_id}`));
-      }
-
       const highlights = [];
       stats.leaderboard.forEach(p => {
         p.log.forEach(m => {
           const tags = deriveHighlightTags(m.batting, m.bowling, m.fielding);
-          if (confirmedHattricks.has(`${m.match_id}:${p.player_id}`)) {
-            tags.push({ key: 'hattrick', icon: '🎩', label: 'Hat-trick' });
-          }
           if (!tags.length) return;
           highlights.push({
             match_id: m.match_id, match_number: m.match_number, played_on: m.played_on,
