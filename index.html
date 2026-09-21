@@ -895,6 +895,20 @@
     .ts-mlog .m-mult { font-size:9.5px; color:var(--muted); font-weight:500; margin-top:1px; }
     .ts-log-boost { font-size:9px; font-weight:700; color:#8A5A00; background:#FBEFC9; border:1px solid #E9D28F; border-radius:4px; padding:1px 4px; margin-top:3px; display:inline-block; white-space:nowrap; }
     .ts-log-pts { font-weight:700; margin-left:auto; }
+
+    /* ── Team Highlights pill content (milestone performances, MY squad) ── */
+    #lbHighlightsContent { padding: 0; }
+    .hl-list { display:flex; flex-direction:column; }
+    .hl-row { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:11px 20px; border-bottom:1px solid rgba(214,207,168,0.7); }
+    .hl-row:last-child { border-bottom:none; }
+    .hl-main { flex:1; min-width:0; }
+    .hl-player { font-weight:600; font-size:13px; }
+    .hl-match { font-size:10.5px; color:var(--muted); margin-top:2px; }
+    .hl-perf { font-size:11.5px; color:var(--text); margin-top:5px; }
+    .hl-perf div { line-height:1.5; }
+    .hl-badges { display:flex; flex-wrap:wrap; gap:4px; justify-content:flex-end; max-width:150px; flex-shrink:0; }
+    .hl-badge { font-size:9.5px; font-weight:700; color:#8A5A00; background:#FBEFC9; border:1px solid #E9D28F; border-radius:4px; padding:2px 6px; white-space:nowrap; }
+
     #lbViewMeta { font-size: 11px; color: var(--muted); }
     /* Chart panel inside lb-body */
     #lbChartContent { padding: 16px 20px 20px; }
@@ -1356,6 +1370,7 @@
           <button class="lbv-pill active" id="lbBtnTable">📋 Table</button>
           <button class="lbv-pill" id="lbBtnChart">📈 Progress</button>
           <button class="lbv-pill" id="lbBtnStats">📊 Team Stats</button>
+          <button class="lbv-pill" id="lbBtnHighlights">🏅 Highlights</button>
         </div>
         <span id="lbViewMeta"></span>
       </div>
@@ -1363,6 +1378,7 @@
         <div id="lbContent"></div>
         <div id="lbChartContent" style="display:none"></div>
         <div id="lbStatsContent" style="display:none"></div>
+        <div id="lbHighlightsContent" style="display:none"></div>
       </div>
     </div>
   </div>
@@ -3947,15 +3963,19 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       const tableEl = $('#lbContent');
       const chartEl = $('#lbChartContent');
       const statsEl = $('#lbStatsContent');
+      const hlEl    = $('#lbHighlightsContent');
       if (tableEl) tableEl.style.display = v === 'table' ? '' : 'none';
       if (chartEl) chartEl.style.display = v === 'chart' ? '' : 'none';
       if (statsEl) statsEl.style.display = v === 'stats' ? '' : 'none';
-      const btnT = $('#lbBtnTable'), btnC = $('#lbBtnChart'), btnS = $('#lbBtnStats');
+      if (hlEl) hlEl.style.display = v === 'highlights' ? '' : 'none';
+      const btnT = $('#lbBtnTable'), btnC = $('#lbBtnChart'), btnS = $('#lbBtnStats'), btnH = $('#lbBtnHighlights');
       if (btnT) btnT.classList.toggle('active', v === 'table');
       if (btnC) btnC.classList.toggle('active', v === 'chart');
       if (btnS) btnS.classList.toggle('active', v === 'stats');
+      if (btnH) btnH.classList.toggle('active', v === 'highlights');
       if (v === 'chart' && lbState.tab !== 'daily') buildLbChart();
       if (v === 'stats' && lbState.tab !== 'daily') buildLbTeamStats();
+      if (v === 'highlights' && lbState.tab !== 'daily') buildLbHighlights();
     }
 
     /** Fetch history data and render the SVG progress chart. */
@@ -4109,6 +4129,57 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         `<table class="ts-mlog"><thead><tr><th>Match</th><th>Performance</th><th>Pts</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
 
+    // ─── TEAM HIGHLIGHTS (milestone performances, my squad only) ──────────────
+
+    /** Fetch this squad's milestone performances and render into #lbHighlightsContent. */
+    async function buildLbHighlights() {
+      const el = $('#lbHighlightsContent');
+      if (!el || !state.db) return;
+      el.innerHTML = '<div class="lb-empty" style="padding:24px 0;">Loading highlights…</div>';
+      const squadId = state.sl?.squad?.id;
+      if (!squadId) {
+        el.innerHTML = '<div class="lb-empty">No squad found — join this contest to see your Team Highlights.</div>';
+        return;
+      }
+      try {
+        const data = await state.db.getSquadHighlights(squadId);
+        el.innerHTML = teamHighlightsHtml(data);
+      } catch (err) {
+        el.innerHTML = `<div class="lb-empty">Highlights unavailable: ${err.message}</div>`;
+      }
+    }
+
+    /** Render every milestone performance (century, wicket haul, hat-trick,
+     * fielding feat, etc.) as a flat, most-recent-first list — one row per
+     * performance, badges built from the tags getSquadHighlights derived. */
+    function teamHighlightsHtml(data) {
+      if (!data || !data.highlights || !data.highlights.length) {
+        return '<div class="lb-empty">No milestone performances yet — centuries, wicket hauls, and other feats from your XI will show up here.</div>';
+      }
+      const rows = data.highlights.map(h => {
+        const oppTeam = h.home_team_id === h.team_id ? h.away_team_id
+          : (h.away_team_id === h.team_id ? h.home_team_id : (h.home_team_id || h.away_team_id));
+        const dateStr = h.played_on
+          ? new Date(h.played_on + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          : '';
+        const lines = [];
+        if (h.batting) { const l = formatBattingLine(h.batting); if (l) lines.push(escapeHtml(l)); }
+        if (h.bowling) { const l = formatBowlingLine(h.bowling); if (l) lines.push(escapeHtml(l)); }
+        if (h.fielding) { const l = formatFieldingLine(h.fielding); if (l) lines.push(escapeHtml(l)); }
+        const perf = lines.map(l => `<div>${l}</div>`).join('');
+        const badges = h.tags.map(t => `<span class="hl-badge">${t.icon} ${escapeHtml(t.label)}</span>`).join('');
+        return `<div class="hl-row">
+            <div class="hl-main">
+              <div class="hl-player">${escapeHtml(h.name)}</div>
+              <div class="hl-match">M${h.match_number ?? '?'} · vs ${escapeHtml(oppTeam || '?')}${dateStr ? ' · ' + dateStr : ''}</div>
+              <div class="hl-perf">${perf}</div>
+            </div>
+            <div class="hl-badges">${badges}</div>
+          </div>`;
+      }).join('');
+      return `<div class="hl-list">${rows}</div>`;
+    }
+
     /** Build and animate the SVG cumulative-points chart inside `container`. */
     function renderLbChartSvg(container, history) {
       const { squads, series, boosters } = history;
@@ -4199,7 +4270,10 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             <button class="lb-cap-pill" data-n="999">All</button>
           </div>
         </div>
-        <button class="lb-trace-btn" id="lbTraceBtn">▶ Trace</button>`;
+        <div style="display:flex;gap:5px">
+          <button class="lb-trace-btn" id="lbTraceStop" style="display:none">◼ Stop</button>
+          <button class="lb-trace-btn" id="lbTraceBtn">▶ Trace</button>
+        </div>`;
       container.appendChild(capBar);
 
       capBar.querySelectorAll('.lb-cap-pill').forEach(btn => {
@@ -4208,12 +4282,8 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           this.classList.add('lb-cap-active');
           cap = parseInt(this.dataset.n);
           manualHidden.clear(); manualShown.clear();
-          // Stop any running trace animation
-          if (typeof traceRafId !== 'undefined' && traceRafId) {
-            cancelAnimationFrame(traceRafId); traceRafId = null;
-            animDone = true;
-            const tb = capBar.querySelector('#lbTraceBtn'); if (tb) tb.textContent = '▶ Trace';
-          }
+          // Stop any running/paused trace animation
+          stopTrace();
           applyVisibility(getVisible());
         });
       });
@@ -4233,6 +4303,14 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         t.textContent = v; svg.appendChild(t);
       }
       svg.appendChild(mk('line', { x1: ML, x2: W - MR, y1: MT + PH, y2: MT + PH, stroke: '#d6cfa8', 'stroke-width': '1' }));
+      // Faint vertical guide at every match (labels only appear on every Nth, so the
+      // unlabeled ones — e.g. M2..M5 between M1 and M6 — still get a line).
+      if (N > 1) {
+        matchNumbers.forEach((mn, i) => {
+          const x = pxOf(i);
+          svg.appendChild(mk('line', { x1: x, x2: x, y1: MT, y2: MT + PH, stroke: '#efe9da', 'stroke-width': '0.8' }));
+        });
+      }
       const xSkip = N <= 10 ? 1 : N <= 20 ? 2 : 5;
       matchNumbers.forEach((mn, i) => {
         if (i % xSkip !== 0 && i !== N - 1) return;
@@ -4257,25 +4335,37 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         svg.appendChild(path); pathEls[sq.squadId] = path;
       });
 
-      // Booster markers
+      // Booster markers — small solid dot on the line (icon + details on hover/tap)
+      container.style.position = 'relative';
+      const boosterTip = document.createElement('div');
+      boosterTip.style.cssText = 'position:absolute;display:none;pointer-events:none;z-index:6;background:#1C1F26;color:#fff;font-size:11px;line-height:1.3;padding:4px 8px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-100%);';
+      const hideBoosterTip = () => { boosterTip.style.display = 'none'; };
       const boosterItems = boosters.map(b => {
         const ci = mxi(b.matchNumber); if (ci < 0) return null;
         const cum = cumulMap[b.squadId]?.[b.matchNumber]; if (cum == null) return null;
         const cx = pxOf(ci), cy = pyOf(cum), color = colorMap[b.squadId] || '#888';
-        const ring = mk('circle', { cx, cy, r: '5', fill: 'white', stroke: color, 'stroke-width': '1.2', opacity: '0' });
-        svg.appendChild(ring);
-        const fo = document.createElementNS(ns, 'foreignObject');
-        fo.setAttribute('x', cx - 5); fo.setAttribute('y', cy - 6);
-        fo.setAttribute('width', '10'); fo.setAttribute('height', '10');
-        fo.style.opacity = '0';
-        const sp = document.createElement('span');
-        sp.style.cssText = 'font-size:7px;line-height:10px;display:block;text-align:center;';
-        sp.textContent = b.booster;
-        fo.appendChild(sp); svg.appendChild(fo);
-        return { ring, fo, matchNumber: b.matchNumber, squadId: b.squadId };
+        const sq = squads.find(s => s.squadId === b.squadId);
+        const g = mk('g', { opacity: '0', style: 'cursor:pointer' });
+        g.appendChild(mk('circle', { cx, cy, r: '9', fill: 'transparent' }));  // generous tap target
+        g.appendChild(mk('circle', { cx, cy, r: '2.8', fill: color, stroke: 'white', 'stroke-width': '1' }));
+        const showTip = (ev) => {
+          ev.stopPropagation();
+          const dot = g.getBoundingClientRect(), box = container.getBoundingClientRect();
+          boosterTip.textContent = `${b.booster} ${sq ? sq.squadName : ''} · M${b.matchNumber}`;
+          boosterTip.style.left = (dot.left + dot.width / 2 - box.left) + 'px';
+          boosterTip.style.top  = (dot.top - box.top - 4) + 'px';
+          boosterTip.style.display = 'block';
+        };
+        g.addEventListener('mouseenter', showTip);
+        g.addEventListener('click', showTip);
+        g.addEventListener('mouseleave', hideBoosterTip);
+        svg.appendChild(g);
+        return { ring: g, matchNumber: b.matchNumber, squadId: b.squadId };
       }).filter(Boolean);
+      svg.addEventListener('click', hideBoosterTip);
 
       container.appendChild(svg);
+      container.appendChild(boosterTip);
 
       // Legend container
       const legendEl = document.createElement('div');
@@ -4370,6 +4460,11 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             const d = pathDUpTo(sq.squadId, N - 1);
             if (pathEls[sq.squadId]) pathEls[sq.squadId].setAttribute('d', d);
             if (glowEls[sq.squadId]) glowEls[sq.squadId].setAttribute('d', d);
+          } else if (show && traceState === 'paused') {
+            // Trace is paused mid-way: draw a newly shown team up to the paused point
+            const d = pathDUpTo(sq.squadId, traceFrac);
+            if (pathEls[sq.squadId]) pathEls[sq.squadId].setAttribute('d', d);
+            if (glowEls[sq.squadId]) glowEls[sq.squadId].setAttribute('d', d);
           } else if (!show) {
             if (pathEls[sq.squadId]) pathEls[sq.squadId].setAttribute('d', '');
             if (glowEls[sq.squadId]) glowEls[sq.squadId].setAttribute('d', '');
@@ -4378,8 +4473,9 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           if (glowEls[sq.squadId]) glowEls[sq.squadId].setAttribute('opacity', show ? '1' : '0');
         });
         boosterItems.forEach(bi => {
-          const v = (vis.has(bi.squadId) && animDone) ? '1' : '0';
-          bi.ring.setAttribute('opacity', v); bi.fo.style.opacity = v;
+          const reached = animDone || (traceState === 'paused' && mxi(bi.matchNumber) <= traceFrac);
+          const v = (vis.has(bi.squadId) && reached) ? '1' : '0';
+          bi.ring.setAttribute('opacity', v);
         });
         rebuildLabels(vis);
         rebuildLegend(vis);
@@ -4413,76 +4509,104 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         return segs.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
       }
 
-      // ── Static render + trace ─────────────────────────────────────────────
+      // ── Static render + trace (start / pause / resume / stop) ─────────────
       let traceRafId = null;
+      let traceState = 'idle';   // 'idle' | 'running' | 'paused'
+      let traceElapsed = 0;      // ms of animation played so far (survives pause)
+      let traceLastTs = null;
+      let traceFrac = 0;         // current fractional match index
+      const traceBtn  = capBar.querySelector('#lbTraceBtn');
+      const traceStop = capBar.querySelector('#lbTraceStop');
+      const STEP_MS = 350, PAUSE_MS = 70, CYCLE = STEP_MS + PAUSE_MS, TOTAL_MS = N * CYCLE;
+
+      function setTraceUi() {
+        if (traceBtn)  traceBtn.textContent = traceState === 'running' ? '⏸ Pause' : traceState === 'paused' ? '▶ Resume' : '▶ Trace';
+        if (traceStop) traceStop.style.display = traceState === 'idle' ? 'none' : '';
+      }
 
       function showAllFinal() {
         animDone = true;
         applyVisibility(getVisible());
       }
 
-      function startTrace(btn) {
+      /** Cancel the animation and jump to the full static chart. */
+      function stopTrace() {
+        if (traceRafId) { cancelAnimationFrame(traceRafId); traceRafId = null; }
+        traceState = 'idle'; traceElapsed = 0; traceLastTs = null;
+        setTraceUi();
+        showAllFinal();
+      }
+
+      function pauseTrace() {
+        if (traceRafId) { cancelAnimationFrame(traceRafId); traceRafId = null; }
+        traceState = 'paused'; traceLastTs = null;
+        setTraceUi();
+      }
+
+      function traceFrame(now) {
+        if (traceLastTs == null) traceLastTs = now;
+        traceElapsed += now - traceLastTs;
+        traceLastTs = now;
+        const elapsed = traceElapsed;
+        let frac;
+        if (elapsed >= TOTAL_MS) { frac = N - 1; }
+        else {
+          const cycleN  = Math.floor(elapsed / CYCLE);
+          const inCycle = elapsed % CYCLE;
+          frac = cycleN + (1 - Math.pow(1 - Math.min(inCycle / STEP_MS, 1), 2));
+        }
+        traceFrac = frac;
+        const vis = getVisible();
+        sortedSquads.forEach(sq => {
+          if (!vis.has(sq.squadId)) return;
+          const me = mySquadIds.has(sq.squadId);
+          const d = pathDUpTo(sq.squadId, frac);
+          if (pathEls[sq.squadId]) { pathEls[sq.squadId].setAttribute('d', d); pathEls[sq.squadId].setAttribute('opacity', me ? '1' : '0.85'); }
+          if (glowEls[sq.squadId]) { glowEls[sq.squadId].setAttribute('d', d); glowEls[sq.squadId].setAttribute('opacity', '1'); }
+        });
+        boosterItems.forEach(bi => {
+          if (!vis.has(bi.squadId)) return;
+          const v = mxi(bi.matchNumber) <= frac ? '1' : '0';
+          bi.ring.setAttribute('opacity', v);
+        });
+        if (elapsed >= TOTAL_MS) {
+          traceRafId = null;
+          stopTrace();   // finished → static final view with labels
+          return;
+        }
+        traceRafId = requestAnimationFrame(traceFrame);
+      }
+
+      function startTrace() {
         if (traceRafId) { cancelAnimationFrame(traceRafId); traceRafId = null; }
         animDone = false;
+        traceElapsed = 0; traceLastTs = null; traceFrac = 0;
         const curVis = getVisible();
         sortedSquads.forEach(sq => {
           if (pathEls[sq.squadId]) pathEls[sq.squadId].setAttribute('d', '');
           if (glowEls[sq.squadId]) glowEls[sq.squadId].setAttribute('d', '');
         });
-        boosterItems.forEach(bi => { bi.ring.setAttribute('opacity', '0'); bi.fo.style.opacity = '0'; });
+        boosterItems.forEach(bi => { bi.ring.setAttribute('opacity', '0'); });
         rebuildLabels(curVis); // animDone=false → labels at opacity 0
-        if (btn) btn.textContent = '◼ Stop';
-
-        const STEP_MS = 350, PAUSE_MS = 70, CYCLE = STEP_MS + PAUSE_MS, TOTAL_MS = N * CYCLE;
-        const t0 = performance.now();
-
-        function frame(now) {
-          const elapsed = now - t0;
-          let frac;
-          if (elapsed >= TOTAL_MS) { frac = N - 1; }
-          else {
-            const cycleN  = Math.floor(elapsed / CYCLE);
-            const inCycle = elapsed % CYCLE;
-            frac = cycleN + (1 - Math.pow(1 - Math.min(inCycle / STEP_MS, 1), 2));
-          }
-          const vis = getVisible();
-          sortedSquads.forEach(sq => {
-            if (!vis.has(sq.squadId)) return;
-            const me = mySquadIds.has(sq.squadId);
-            const d = pathDUpTo(sq.squadId, frac);
-            if (pathEls[sq.squadId]) { pathEls[sq.squadId].setAttribute('d', d); pathEls[sq.squadId].setAttribute('opacity', me ? '1' : '0.85'); }
-            if (glowEls[sq.squadId]) { glowEls[sq.squadId].setAttribute('d', d); glowEls[sq.squadId].setAttribute('opacity', '1'); }
-          });
-          boosterItems.forEach(bi => {
-            if (!vis.has(bi.squadId)) return;
-            const v = mxi(bi.matchNumber) <= frac ? '1' : '0';
-            bi.ring.setAttribute('opacity', v); bi.fo.style.opacity = v;
-          });
-          if (elapsed >= TOTAL_MS && !animDone) {
-            animDone = true;
-            Object.values(labelsBySquad).forEach(({ tick, nm }) => {
-              tick.setAttribute('opacity', '0.5'); nm.setAttribute('opacity', '1');
-            });
-            traceRafId = null;
-            if (btn) btn.textContent = '▶ Trace';
-          }
-          if (elapsed < TOTAL_MS + 300) traceRafId = requestAnimationFrame(frame);
-        }
-        traceRafId = requestAnimationFrame(frame);
+        traceState = 'running';
+        setTraceUi();
+        traceRafId = requestAnimationFrame(traceFrame);
       }
 
-      // Wire trace button
-      const traceBtn = capBar.querySelector('#lbTraceBtn');
+      function resumeTrace() {
+        traceState = 'running'; traceLastTs = null;
+        setTraceUi();
+        traceRafId = requestAnimationFrame(traceFrame);
+      }
+
       if (traceBtn) {
         traceBtn.addEventListener('click', () => {
-          if (traceRafId) {
-            cancelAnimationFrame(traceRafId); traceRafId = null;
-            animDone = true; showAllFinal(); traceBtn.textContent = '▶ Trace';
-          } else {
-            startTrace(traceBtn);
-          }
+          if (traceState === 'running')      pauseTrace();
+          else if (traceState === 'paused')  resumeTrace();
+          else                               startTrace();
         });
       }
+      if (traceStop) traceStop.addEventListener('click', stopTrace);
 
       showAllFinal(); // default: static final state
     }
@@ -12591,6 +12715,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     $('#lbBtnTable').addEventListener('click', () => setLbView('table'));
     $('#lbBtnChart').addEventListener('click', () => setLbView('chart'));
     $('#lbBtnStats').addEventListener('click', () => setLbView('stats'));
+    $('#lbBtnHighlights').addEventListener('click', () => setLbView('highlights'));
 
     // ─── Page-level tabs (Contest / My Team / Season) ────────────────────────
     let activePageTab = 'home'; // default — Home on login
@@ -13102,6 +13227,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
                 <button class="lbv-pill active" id="inlineBtnTable">📋 Table</button>
                 <button class="lbv-pill" id="inlineBtnChart">📈 Progress</button>
                 <button class="lbv-pill" id="inlineBtnStats">📊 Team Stats</button>
+                <button class="lbv-pill" id="inlineBtnHighlights">🏅 Highlights</button>
               </div>
               <span id="inlineLbMeta" style="font-size:11px;color:var(--muted);"></span>
             </div>
@@ -13137,33 +13263,51 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             }).join('')}
           </div></div>
             <div id="inlineLbChartView" style="display:none;"></div>
-            <div id="inlineLbStatsView" style="display:none;"></div>`;
+            <div id="inlineLbStatsView" style="display:none;"></div>
+            <div id="inlineLbHighlightsView" style="display:none;"></div>`;
           wireInlineLbExpand(content, null, contestId);
           document.getElementById('inlineBtnTable')?.addEventListener('click', () => {
             document.getElementById('inlineLbTableView').style.display = '';
             document.getElementById('inlineLbChartView').style.display = 'none';
             document.getElementById('inlineLbStatsView').style.display = 'none';
+            document.getElementById('inlineLbHighlightsView').style.display = 'none';
             document.getElementById('inlineBtnTable').classList.add('active');
             document.getElementById('inlineBtnChart').classList.remove('active');
             document.getElementById('inlineBtnStats').classList.remove('active');
+            document.getElementById('inlineBtnHighlights').classList.remove('active');
           });
           document.getElementById('inlineBtnChart')?.addEventListener('click', () => {
             document.getElementById('inlineLbTableView').style.display = 'none';
             document.getElementById('inlineLbChartView').style.display = '';
             document.getElementById('inlineLbStatsView').style.display = 'none';
+            document.getElementById('inlineLbHighlightsView').style.display = 'none';
             document.getElementById('inlineBtnTable').classList.remove('active');
             document.getElementById('inlineBtnChart').classList.add('active');
             document.getElementById('inlineBtnStats').classList.remove('active');
+            document.getElementById('inlineBtnHighlights').classList.remove('active');
             buildInlineChart(contestId);
           });
           document.getElementById('inlineBtnStats')?.addEventListener('click', () => {
             document.getElementById('inlineLbTableView').style.display = 'none';
             document.getElementById('inlineLbChartView').style.display = 'none';
             document.getElementById('inlineLbStatsView').style.display = '';
+            document.getElementById('inlineLbHighlightsView').style.display = 'none';
             document.getElementById('inlineBtnTable').classList.remove('active');
             document.getElementById('inlineBtnChart').classList.remove('active');
             document.getElementById('inlineBtnStats').classList.add('active');
+            document.getElementById('inlineBtnHighlights').classList.remove('active');
             buildInlineTeamStats(contestId);
+          });
+          document.getElementById('inlineBtnHighlights')?.addEventListener('click', () => {
+            document.getElementById('inlineLbTableView').style.display = 'none';
+            document.getElementById('inlineLbChartView').style.display = 'none';
+            document.getElementById('inlineLbStatsView').style.display = 'none';
+            document.getElementById('inlineLbHighlightsView').style.display = '';
+            document.getElementById('inlineBtnTable').classList.remove('active');
+            document.getElementById('inlineBtnChart').classList.remove('active');
+            document.getElementById('inlineBtnStats').classList.remove('active');
+            document.getElementById('inlineBtnHighlights').classList.add('active');
+            buildInlineHighlights(contestId);
           });
           return;
         }
@@ -13276,6 +13420,27 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         el.dataset.built = contestId;
       } catch (err) {
         el.innerHTML = `<div class="lb-empty">Team stats unavailable: ${err.message}</div>`;
+      }
+    }
+
+    /** Inline-leaderboard counterpart to buildLbHighlights() — same squad-scoped
+     *  milestone list, rendered into #inlineLbHighlightsView instead of the modal. */
+    async function buildInlineHighlights(contestId) {
+      const el = document.getElementById('inlineLbHighlightsView');
+      if (!el || !state.db) return;
+      if (el.dataset.built === contestId) return;  // already rendered for this contest
+      el.innerHTML = '<div class="lb-empty" style="padding:24px 0;">Loading highlights…</div>';
+      const squadId = state.sl?.squad?.id;
+      if (!squadId) {
+        el.innerHTML = '<div class="lb-empty">No squad found — join this contest to see your Team Highlights.</div>';
+        return;
+      }
+      try {
+        const data = await state.db.getSquadHighlights(squadId);
+        el.innerHTML = teamHighlightsHtml(data);
+        el.dataset.built = contestId;
+      } catch (err) {
+        el.innerHTML = `<div class="lb-empty">Highlights unavailable: ${err.message}</div>`;
       }
     }
 

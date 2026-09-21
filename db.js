@@ -178,6 +178,68 @@ function resolvePhaseWindow(targetMatchNumber, allMatches, startMatchNumber, pla
 }
 
 /**
+ * Derive the "highlight" badges a single match performance earns — a
+ * century, a wicket haul, a fielding feat, and so on — from the same
+ * batting/bowling/fielding stat objects Team Stats' match log already
+ * carries per entry (player_match_stats' raw shape, formatted for display
+ * by formatBattingLine/formatBowlingLine/formatFieldingLine elsewhere).
+ * Pure and stateless — hat-tricks are NOT derivable from this shape alone
+ * (no ball-by-ball sequence is stored), so getSquadHighlights layers those
+ * on separately from the admin-confirmed potential_hattricks table.
+ *
+ * @param {object|null} batting
+ * @param {object|null} bowling
+ * @param {object|null} fielding
+ * @returns {Array<{key: string, icon: string, label: string}>}
+ */
+function deriveHighlightTags(batting, bowling, fielding) {
+  const tags = [];
+
+  if (batting) {
+    const runs = Number(batting.runs ?? 0);
+    if (runs >= 100) {
+      tags.push({ key: 'century', icon: '💯', label: 'Century' });
+    } else if (runs >= 50) {
+      tags.push({ key: 'half_century', icon: '🏏', label: 'Half-century' });
+    } else if (batting.isDismissed === true && runs === 0) {
+      tags.push({ key: 'duck', icon: '🦆', label: 'Duck' });
+    }
+  }
+
+  if (bowling) {
+    const wkts = Number(bowling.wickets ?? 0);
+    if (wkts >= 5) {
+      tags.push({ key: 'five_wkt', icon: '🔥', label: '5-wkt haul' });
+    } else if (wkts === 4) {
+      tags.push({ key: 'four_wkt', icon: '🎯', label: '4-wkt haul' });
+    } else if (wkts === 3) {
+      tags.push({ key: 'three_wkt', icon: '👌', label: '3-wkt haul' });
+    }
+    if (Number(bowling.maidens ?? 0) >= 1) {
+      tags.push({ key: 'maiden', icon: '0️⃣', label: 'Maiden' });
+    }
+  }
+
+  if (fielding) {
+    const catches = Number(fielding.catches ?? 0);
+    if (catches >= 3) {
+      tags.push({ key: 'three_catches', icon: '🙌', label: `${catches} catches` });
+    }
+    if (Number(fielding.stumpings ?? 0) >= 1) {
+      tags.push({ key: 'stumping', icon: '🧤', label: 'Stumping' });
+    }
+    if (Number(fielding.runOutDirect ?? 0) >= 1) {
+      tags.push({ key: 'direct_runout', icon: '💥', label: 'Run out' });
+    }
+    if (Number(fielding.runOutIndirect ?? 0) >= 1) {
+      tags.push({ key: 'indirect_runout', icon: '🤝', label: 'Run out (assist)' });
+    }
+  }
+
+  return tags;
+}
+
+/**
  * Resolve the effective Booster/Xfer budget config for a contest, falling
  * back to the tournament's main Season Long contest when this is a
  * shared/standard private league (migration_v13's isSharedXI concept: a
@@ -5525,6 +5587,63 @@ export function createDb(cfg = {}) {
         playersUsed  : leaderboard.length,
         leaderboard,
       };
+    },
+
+    /**
+     * Team Highlights — every milestone performance (centuries, wicket hauls,
+     * maidens, hat-tricks, fielding feats) any of this squad's own players
+     * put in while actually in the locked XI. Reuses getSquadTeamStats' own
+     * fetch (same tournament-scoped v_match_xi_with_scores + player_match_stats
+     * join, already filtered to matches the player's team actually played)
+     * instead of re-querying, then layers on the one thing that data alone
+     * can't answer — hat-tricks, which need ball-by-ball sequence info this
+     * app doesn't store — from the admin-confirmed potential_hattricks table.
+     *
+     * @param {string} squadId
+     * @returns {Promise<{highlights: Array<{match_id, match_number, played_on,
+     *   home_team_id, away_team_id, player_id, name, team_id, batting, bowling,
+     *   fielding, tags: Array<{key, icon, label}>}>}>}
+     */
+    async getSquadHighlights(squadId) {
+      const stats = await this.getSquadTeamStats(squadId);
+      if (!stats.leaderboard.length) return { highlights: [] };
+
+      const matchIds = [...new Set(
+        stats.leaderboard.flatMap(p => p.log.map(m => m.match_id))
+      )];
+
+      const sb = await getClient();
+      const confirmedHattricks = new Set();
+      if (matchIds.length) {
+        const { data, error } = await sb
+          .from('potential_hattricks')
+          .select('match_id, player_id')
+          .eq('resolved_by', 'confirmed')
+          .in('match_id', matchIds);
+        if (error) throw error;
+        (data || []).forEach(h => confirmedHattricks.add(`${h.match_id}:${h.player_id}`));
+      }
+
+      const highlights = [];
+      stats.leaderboard.forEach(p => {
+        p.log.forEach(m => {
+          const tags = deriveHighlightTags(m.batting, m.bowling, m.fielding);
+          if (confirmedHattricks.has(`${m.match_id}:${p.player_id}`)) {
+            tags.push({ key: 'hattrick', icon: '🎩', label: 'Hat-trick' });
+          }
+          if (!tags.length) return;
+          highlights.push({
+            match_id: m.match_id, match_number: m.match_number, played_on: m.played_on,
+            home_team_id: m.home_team_id, away_team_id: m.away_team_id,
+            player_id: p.player_id, name: p.name, team_id: p.team_id,
+            batting: m.batting, bowling: m.bowling, fielding: m.fielding,
+            tags,
+          });
+        });
+      });
+
+      highlights.sort((a, b) => (b.match_number ?? 0) - (a.match_number ?? 0));
+      return { highlights };
     },
 
     // ─── Shared squads ───────────────────────────────────────────────────────
