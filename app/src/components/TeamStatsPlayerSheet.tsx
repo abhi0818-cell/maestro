@@ -18,6 +18,7 @@ import React from 'react';
 import {
   Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fontSize, radius, spacing } from '../theme';
 import { TeamStatsPlayer } from '../lib/teamStats';
 import { getBoosterMeta } from '../store/boosterStore';
@@ -46,7 +47,7 @@ interface Props {
 // this file so a screenshot can confirm at a glance whether a given EAS
 // Update actually reached the device, instead of guessing from behavior
 // alone. Safe to delete once the scroll issue is confirmed fixed.
-const BUILD_MARKER = 'build: ts-fix-7';
+const BUILD_MARKER = 'build: ts-fix-8';
 
 export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props) {
   const log = player ? [...player.log].sort((a, b) => (b.matchNumber ?? 0) - (a.matchNumber ?? 0)) : [];
@@ -60,8 +61,14 @@ export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props
   // and make the list unscrollable). hasSubtitle tracks whether the
   // Captain/VC line below the header is present, since it takes real space.
   const { height: winH } = useWindowDimensions();
+  // Android's on-screen nav/gesture bar (and iOS's home indicator) sit
+  // outside the safe area but the sheet, being a Modal anchored to the
+  // literal bottom of the screen, was drawing its last row right under
+  // them. Reserve that inset as extra bottom padding on the sheet, and
+  // count it against the same budget scrollMaxHeight is computed from.
+  const insets = useSafeAreaInsets();
   const hasSubtitle = !!player && (player.timesCaptain > 0 || player.timesVc > 0);
-  const chromeReserve = hasSubtitle ? 180 : 150; // header + padding (+ subtitle line)
+  const chromeReserve = (hasSubtitle ? 180 : 150) + insets.bottom; // header + padding (+ subtitle line) + system bar
   const scrollMaxHeight = Math.max(220, Math.round(winH * 0.8) - chromeReserve);
 
   return (
@@ -78,7 +85,7 @@ export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props
             intercepts touches over its own bounds) removes that
             competition entirely. */}
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: spacing.xl + insets.bottom }]}>
           <View style={styles.header}>
             <Text style={styles.title} numberOfLines={1}>
               {player?.name ?? ''} — Match log
@@ -162,7 +169,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: radius.xl,
     paddingHorizontal:    spacing.lg,
     paddingTop:           spacing.lg,
-    paddingBottom:        spacing.xl,
+    // paddingBottom is set per-render below (spacing.xl + the device's
+    // bottom safe-area inset), so it clears the on-screen nav/gesture bar.
     maxHeight:            '80%',
   },
   header: {
