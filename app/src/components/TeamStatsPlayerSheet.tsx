@@ -60,8 +60,19 @@ export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={() => {}}>
+      <View style={styles.overlay}>
+        {/* Backdrop-only dismiss layer, absolutely positioned behind the
+            sheet rather than wrapping it. The previous version wrapped the
+            whole sheet — including the ScrollView — in a Pressable just to
+            swallow taps so they wouldn't bubble up and close the modal; on
+            Android that outer Pressable was winning the touch-responder
+            negotiation before the ScrollView could recognize a vertical
+            drag, so the list rendered but never scrolled. A plain View for
+            the sheet (rendered on top of this layer, so it naturally
+            intercepts touches over its own bounds) removes that
+            competition entirely. */}
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={styles.sheet}>
           <View style={styles.header}>
             <Text style={styles.title} numberOfLines={1}>
               {player?.name ?? ''} — Match log
@@ -126,8 +137,8 @@ export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props
               })}
             </ScrollView>
           )}
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -186,8 +197,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   colMatch: { flex: 1 },
-  colPerf:  { flex: 1.6 },
-  colPts:   { width: 62, alignItems: 'flex-end' },
+  colPerf:  { flex: 1.5 },
+  // Widened from 62 — 4-figure point totals (e.g. "1,112") plus the
+  // "<base> x<mult>" line beneath were getting clipped against the right
+  // edge in this column at 62.
+  colPts:   { width: 74, alignItems: 'flex-end' },
 
   row: {
     flexDirection:     'row',
