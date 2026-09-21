@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fontSize, radius, spacing } from '../theme';
 import { TeamStatsPlayer } from '../lib/teamStats';
 import { getBoosterMeta } from '../store/boosterStore';
+import BoosterIcon from './BoosterIcon';
 import {
   formatBattingLine, formatBowlingLine, formatFieldingLine,
 } from '../lib/playerHistory';
@@ -47,7 +48,7 @@ interface Props {
 // this file so a screenshot can confirm at a glance whether a given EAS
 // Update actually reached the device, instead of guessing from behavior
 // alone. Safe to delete once the scroll issue is confirmed fixed.
-const BUILD_MARKER = 'build: ts-fix-8';
+const BUILD_MARKER = 'build: ts-fix-9';
 
 export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props) {
   const log = player ? [...player.log].sort((a, b) => (b.matchNumber ?? 0) - (a.matchNumber ?? 0)) : [];
@@ -142,7 +143,18 @@ export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props
                       <Text style={styles.cellMult}>{m.basePoints ?? 0} ×{m.multiplier}</Text>
                       {boostMeta && (
                         <View style={styles.boostTag}>
-                          <Text style={styles.boostTagText}>{boostMeta.icon} {boostMeta.name}</Text>
+                          {/* boostMeta.icon isn't always a short emoji — the
+                              dynamic domestic-double booster (e.g. CPL's
+                              Caribbean Double) carries a data:image/... URI
+                              crest instead (see BoosterIcon's docstring), so
+                              this can't be interpolated straight into Text
+                              like the other boosters' plain-emoji icons —
+                              that was dumping the raw base64 string as
+                              visible text. BoosterIcon picks Image vs Text
+                              based on the string itself, same as every other
+                              booster badge in the app. */}
+                          <BoosterIcon icon={boostMeta.icon} size={10} style={styles.boostTagIcon} />
+                          <Text style={styles.boostTagText}>{boostMeta.name}</Text>
                         </View>
                       )}
                     </View>
@@ -231,6 +243,8 @@ const styles = StyleSheet.create({
   cellMult:    { color: C.muted, fontSize: fontSize.xs, marginTop: 1, textAlign: 'right' },
 
   boostTag: {
+    flexDirection:      'row',
+    alignItems:         'center',
     alignSelf:          'flex-end',
     marginTop:          3,
     backgroundColor:    C.boostBg,
@@ -240,5 +254,6 @@ const styles = StyleSheet.create({
     paddingHorizontal:  6,
     paddingVertical:    2,
   },
+  boostTagIcon: { marginRight: 3 },
   boostTagText: { color: C.boostText, fontSize: 9, fontWeight: '700' },
 });
