@@ -8,7 +8,7 @@
  *   - Tappable legend rows — show/hide individual team lines
  *   - Booster markers on the line at the match they were used
  *   - Right-side labels with Y de-collision
- *   - ▶ Trace button to animate the chart path on demand
+ *   - ▶ Trace button to animate the chart path on demand (⏸ Pause / ▶ Resume / ◼ Stop)
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -24,6 +24,7 @@ import Svg, {
   G,
   Line,
   Path,
+  Rect,
   Text as SvgText,
 } from 'react-native-svg';
 import { LeaderboardHistory } from '../lib/leaderboardHistory';
@@ -69,8 +70,11 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
 
   // Animation state: null = static final view, number = current fractional match index
   const [animFrac, setAnimFrac] = useState<number | null>(null);
-  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const animStartRef = useRef<number>(0);
+  const [paused,   setPaused]   = useState(false);
+  const [tipIdx,   setTipIdx]   = useState<number | null>(null);  // tapped booster dot
+  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const elapsedRef   = useRef<number>(0);   // ms of animation played so far (survives pause)
+  const lastTickRef  = useRef<number>(0);
 
   // ── Derived from props ─────────────────────────────────────────────────────
 
@@ -127,6 +131,7 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
 
   const switchCap = (n: number) => {
     stopTrace();
+    setTipIdx(null);
     setCap(n);
     setManualHidden(new Set());
     setManualShown(new Set());
@@ -233,25 +238,31 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
     [squads, mySquadIds],
   );
 
-  // ── Trace animation ────────────────────────────────────────────────────────
+  // ── Trace animation (start / pause / resume / stop) ────────────────────────
+
+  const clearTimer = () => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  };
 
   const stopTrace = useCallback(() => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    clearTimer();
+    elapsedRef.current = 0;
+    setPaused(false);
     setAnimFrac(null);
   }, []);
 
-  const startTrace = useCallback(() => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  const runTimer = useCallback(() => {
+    clearTimer();
     const TOTAL_MS = N * CYCLE;
-    animStartRef.current = Date.now();
-    setAnimFrac(0);
+    lastTickRef.current = Date.now();
 
     timerRef.current = setInterval(() => {
-      const elapsed = Date.now() - animStartRef.current;
+      const now = Date.now();
+      elapsedRef.current += now - lastTickRef.current;
+      lastTickRef.current = now;
+      const elapsed = elapsedRef.current;
       if (elapsed >= TOTAL_MS) {
-        clearInterval(timerRef.current!);
-        timerRef.current = null;
-        setAnimFrac(null); // back to static
+        stopTrace(); // finished → back to static
         return;
       }
       const cycleN  = Math.floor(elapsed / CYCLE);
@@ -259,7 +270,24 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
       const frac    = cycleN + (1 - Math.pow(1 - Math.min(inCycle / STEP_MS, 1), 2));
       setAnimFrac(frac);
     }, 33);
-  }, [N]);
+  }, [N, stopTrace]);
+
+  const startTrace = useCallback(() => {
+    elapsedRef.current = 0;
+    setPaused(false);
+    setAnimFrac(0);
+    runTimer();
+  }, [runTimer]);
+
+  const pauseTrace = useCallback(() => {
+    clearTimer();
+    setPaused(true);           // animFrac stays where it is → chart freezes
+  }, []);
+
+  const resumeTrace = useCallback(() => {
+    setPaused(false);
+    runTimer();
+  }, [runTimer]);
 
   // Cleanup on unmount
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
@@ -290,16 +318,25 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
             ))}
           </View>
         </View>
-        <Pressable
-          onPress={isAnimating ? stopTrace : startTrace}
-          style={s.traceBtn}
-        >
-          <Text style={s.traceBtnText}>{isAnimating ? '◼ Stop' : '▶ Trace'}</Text>
-        </Pressable>
+        <View style={s.traceBtns}>
+          {isAnimating && (
+            <Pressable onPress={stopTrace} style={s.traceBtn}>
+              <Text style={s.traceBtnText}>◼ Stop</Text>
+            </Pressable>
+          )}
+          <Pressable
+            onPress={!isAnimating ? startTrace : paused ? resumeTrace : pauseTrace}
+            style={s.traceBtn}
+          >
+            <Text style={s.traceBtnText}>
+              {!isAnimating ? '▶ Trace' : paused ? '▶ Resume' : '⏸ Pause'}
+            </Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* SVG chart */}
-      <Svg width={W} height={H}>
+      <Svg width={W} height={H} onPress={() => setTipIdx(null)}>
         {/* Y grid lines */}
         {yLines.map(v => {
           const y = pyOf(v);
@@ -310,6 +347,16 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
             </G>
           );
         })}
+
+        {/* Vertical guide at every match (labels are skipped on some, so these fill the gaps) */}
+        {N > 1 && matchNumbers.map((mn, i) => (
+          <Line
+            key={`vg-${mn}`}
+            x1={pxOf(i)} x2={pxOf(i)}
+            y1={MT}      y2={MT + PH}
+            stroke="rgba(0,0,0,0.06)" strokeWidth={0.8}
+          />
+        ))}
 
         {/* X baseline */}
         <Line x1={ML} x2={W - MR} y1={MT + PH} y2={MT + PH} stroke="rgba(201,168,76,0.3)" strokeWidth={1} />
@@ -358,7 +405,7 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
           );
         })}
 
-        {/* Booster markers — show when reached (animating) or always (static) */}
+        {/* Booster markers — small solid dot on the line; tap for icon + details */}
         {boosters.map((b, idx) => {
           if (!visible.has(b.squadId)) return null;
           const ci  = mxi(b.matchNumber);
@@ -371,12 +418,34 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
           const cy    = pyOf(cum);
           const color = colorMap[b.squadId] || '#888';
           return (
-            <G key={idx}>
-              <Circle cx={cx} cy={cy} r={5} fill="white" stroke={color} strokeWidth={1.2} />
-              <SvgText x={cx} y={cy + 3.5} fontSize={7} textAnchor="middle">{b.booster}</SvgText>
+            <G key={idx} onPress={() => setTipIdx(tipIdx === idx ? null : idx)}>
+              {/* generous invisible tap target */}
+              <Circle cx={cx} cy={cy} r={11} fill="transparent" />
+              <Circle cx={cx} cy={cy} r={2.8} fill={color} stroke="white" strokeWidth={1} />
             </G>
           );
         })}
+
+        {/* Booster tooltip for the tapped dot */}
+        {(() => {
+          if (tipIdx === null || isAnimating) return null;
+          const b = boosters[tipIdx];
+          if (!b || !visible.has(b.squadId)) return null;
+          const ci  = mxi(b.matchNumber);
+          const cum = (series[b.squadId] || []).find(e => e.matchNumber === b.matchNumber)?.cumulative;
+          if (ci < 0 || cum == null) return null;
+          const sqName = squads.find(q => q.squadId === b.squadId)?.squadName ?? '';
+          const text   = `${b.booster} ${sqName.length > 14 ? sqName.slice(0, 13) + '…' : sqName} · M${b.matchNumber}`;
+          const tw     = text.length * 5.2 + 12, th = 18;
+          const tx     = Math.min(Math.max(pxOf(ci) - tw / 2, 2), W - tw - 2);
+          const ty     = Math.max(pyOf(cum) - th - 8, 2);
+          return (
+            <G pointerEvents="none">
+              <Rect x={tx} y={ty} width={tw} height={th} rx={5} fill="#1C1F26" />
+              <SvgText x={tx + tw / 2} y={ty + 12} fontSize={9.5} fill="#fff" textAnchor="middle">{text}</SvgText>
+            </G>
+          );
+        })()}
 
         {/* Right-side labels — static mode only */}
         {labelData.map(({ sq, last, color, me, rawY }) => {
@@ -478,6 +547,10 @@ const s = StyleSheet.create({
   },
   capPillTextActive: {
     color: C.accent,
+  },
+  traceBtns: {
+    flexDirection: 'row',
+    gap:           6,
   },
   traceBtn: {
     paddingHorizontal: 10,
