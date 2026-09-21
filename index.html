@@ -4233,7 +4233,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       }
 
       // ── SVG setup ─────────────────────────────────────────────────────────
-      const W = 560, H = 260, ML = 38, MR = 118, MT = 14, MB = 28;
+      const W = 560, H = 260, ML = 38, MR = 16, MT = 14, MB = 28;
       const PW = W - ML - MR, PH = H - MT - MB;
       const allCumuls = Object.values(cumulMap).flatMap(m => Object.values(m).map(Number));
       const maxPts = allCumuls.length ? Math.max(...allCumuls) * 1.12 : 100;
@@ -4270,7 +4270,10 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             <button class="lb-cap-pill" data-n="999">All</button>
           </div>
         </div>
-        <div style="display:flex;gap:5px">
+        <div style="display:flex;gap:5px;align-items:center">
+          <button class="lb-trace-btn" id="lbZoomOut" title="Zoom out">−</button>
+          <span id="lbZoomVal" style="font-size:10px;font-weight:600;min-width:22px;text-align:center;color:#7A7060">1×</span>
+          <button class="lb-trace-btn" id="lbZoomIn" title="Zoom in">+</button>
           <button class="lb-trace-btn" id="lbTraceStop" style="display:none">◼ Stop</button>
           <button class="lb-trace-btn" id="lbTraceBtn">▶ Trace</button>
         </div>`;
@@ -4311,7 +4314,8 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           svg.appendChild(mk('line', { x1: x, x2: x, y1: MT, y2: MT + PH, stroke: '#efe9da', 'stroke-width': '0.8' }));
         });
       }
-      const xSkip = N <= 10 ? 1 : N <= 20 ? 2 : 5;
+      // Label every k-th match so labels stay ≥ ~34 viewBox-units apart
+      const xSkip = Math.max(1, Math.ceil(34 / (N > 1 ? PW / (N - 1) : PW)));
       matchNumbers.forEach((mn, i) => {
         if (i % xSkip !== 0 && i !== N - 1) return;
         const t = mk('text', { x: pxOf(i), y: MT + PH + 14, 'font-size': '9', fill: '#bbb', 'text-anchor': 'middle', 'font-family': 'inherit' });
@@ -4364,8 +4368,25 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       }).filter(Boolean);
       svg.addEventListener('click', hideBoosterTip);
 
-      container.appendChild(svg);
+      const scrollWrap = document.createElement('div');
+      scrollWrap.style.cssText = 'overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;';
+      scrollWrap.appendChild(svg);
+      container.appendChild(scrollWrap);
       container.appendChild(boosterTip);
+
+      // Zoom: widen the SVG (viewBox keeps proportions); the wrapper scrolls sideways
+      let zoom = 1;
+      function applyZoom() {
+        svg.setAttribute('width', (zoom * 100) + '%');
+        const zv = capBar.querySelector('#lbZoomVal'); if (zv) zv.textContent = zoom + '×';
+        const zo = capBar.querySelector('#lbZoomOut'), zi = capBar.querySelector('#lbZoomIn');
+        if (zo) zo.style.opacity = zoom <= 1 ? '0.35' : '1';
+        if (zi) zi.style.opacity = zoom >= 4 ? '0.35' : '1';
+        boosterTip.style.display = 'none';
+      }
+      capBar.querySelector('#lbZoomOut').addEventListener('click', () => { zoom = Math.max(1, zoom - 1); applyZoom(); });
+      capBar.querySelector('#lbZoomIn').addEventListener('click',  () => { zoom = Math.min(4, zoom + 1); applyZoom(); });
+      applyZoom();
 
       // Legend container
       const legendEl = document.createElement('div');
@@ -4376,40 +4397,8 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       const labelsBySquad = {}; // squadId -> { tick, nm }
       let animDone = false;
 
-      function rebuildLabels(vis) {
-        Object.values(labelsBySquad).forEach(({ tick, nm }) => {
-          tick.parentNode?.removeChild(tick);
-          nm.parentNode?.removeChild(nm);
-        });
-        Object.keys(labelsBySquad).forEach(k => delete labelsBySquad[k]);
-
-        const finalData = squads
-          .filter(sq => vis.has(sq.squadId) && (series[sq.squadId] || []).length)
-          .map(sq => {
-            const pts = series[sq.squadId] || [], last = pts[pts.length - 1];
-            return last ? { sq, last, color: colorMap[sq.squadId], me: mySquadIds.has(sq.squadId), rawY: pyOf(last.cumulative) } : null;
-          })
-          .filter(Boolean)
-          .sort((a, b) => a.rawY - b.rawY);
-
-        const MIN_GAP = 13;
-        for (let i = 1; i < finalData.length; i++) {
-          if (finalData[i].rawY - finalData[i-1].rawY < MIN_GAP)
-            finalData[i].rawY = finalData[i-1].rawY + MIN_GAP;
-        }
-
-        finalData.forEach(({ sq, last, color, me, rawY }) => {
-          const lx = W - MR + 8, actualY = pyOf(last.cumulative);
-          const op = animDone ? '0.5' : '0';
-          const tick = mk('line', { x1: W - MR + 2, x2: lx - 3, y1: actualY, y2: rawY + 2, stroke: color, 'stroke-width': '0.7', opacity: op });
-          svg.appendChild(tick);
-          const shortName = sq.squadName.length > 11 ? sq.squadName.slice(0, 10) + '…' : sq.squadName;
-          const nm = mk('text', { x: lx, y: rawY + 4, 'font-size': '9', fill: color, 'font-weight': me ? '700' : '500', 'font-family': 'inherit', opacity: animDone ? '1' : '0' });
-          nm.textContent = `${shortName} · ${last.cumulative}`;
-          svg.appendChild(nm);
-          labelsBySquad[sq.squadId] = { tick, nm };
-        });
-      }
+      // End-of-line labels removed (names + points live in the legend below).
+      function rebuildLabels() {}
 
       function rebuildLegend(vis) {
         legendEl.innerHTML = '';

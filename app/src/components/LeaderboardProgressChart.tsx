@@ -72,6 +72,7 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
   const [animFrac, setAnimFrac] = useState<number | null>(null);
   const [paused,   setPaused]   = useState(false);
   const [tipIdx,   setTipIdx]   = useState<number | null>(null);  // tapped booster dot
+  const [zoom,     setZoom]     = useState(1);                     // horizontal zoom (1×–4×)
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef   = useRef<number>(0);   // ms of animation played so far (survives pause)
   const lastTickRef  = useRef<number>(0);
@@ -149,9 +150,9 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
 
   // ── Chart geometry ─────────────────────────────────────────────────────────
 
-  const W  = width;
+  const W  = width * zoom;
   const H  = 200;
-  const ML = 36, MR = 96, MT = 10, MB = 22;
+  const ML = 36, MR = 14, MT = 10, MB = 22;
   const PW = W - ML - MR, PH = H - MT - MB;
 
   const pxOf = (i: number)  => ML + (N > 1 ? (i * PW) / (N - 1) : PW / 2);
@@ -166,7 +167,8 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
   const yLines   = [];
   for (let v = yStep; v < maxPts; v += yStep) yLines.push(v);
 
-  const xSkip = N <= 10 ? 1 : N <= 20 ? 2 : 5;
+  // Label every k-th match so labels stay ≥ ~30px apart (more labels as you zoom in)
+  const xSkip = Math.max(1, Math.ceil(30 / (N > 1 ? PW / (N - 1) : PW)));
 
   // Build full SVG path d for a squad
   const buildPath = (squadId: string): string => {
@@ -200,35 +202,6 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
     }
     return segs.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
   };
-
-  // Right-side labels with Y de-collision (only shown in static mode)
-  const labelData = useMemo(() => {
-    if (animFrac !== null) return [];
-    const data = squads
-      .filter(sq => visible.has(sq.squadId) && (series[sq.squadId] || []).length)
-      .map(sq => {
-        const pts  = series[sq.squadId] || [];
-        const last = pts[pts.length - 1];
-        if (!last) return null;
-        return {
-          sq,
-          last,
-          color: colorMap[sq.squadId],
-          me:    mySquadIds.has(sq.squadId),
-          rawY:  pyOf(last.cumulative),
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => !!x)
-      .sort((a, b) => a.rawY - b.rawY);
-
-    const MIN_GAP = 13;
-    for (let i = 1; i < data.length; i++) {
-      if (data[i].rawY - data[i - 1].rawY < MIN_GAP)
-        data[i].rawY = data[i - 1].rawY + MIN_GAP;
-    }
-    return data;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [animFrac, squads, series, colorMap, mySquadIds, visible, maxPts, matchNumbers, N]);
 
   // Render order: others first, "you" on top
   const sortedSquads = useMemo(() =>
@@ -336,7 +309,29 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
       </View>
 
       {/* SVG chart */}
-      <Svg width={W} height={H} onPress={() => setTipIdx(null)}>
+      {/* Zoom controls */}
+      <View style={s.zoomRow}>
+        <Text style={s.capBarLabel}>Zoom</Text>
+        <Pressable onPress={() => setZoom(z => Math.max(1, z - 1))} style={[s.zoomBtn, zoom <= 1 && s.zoomBtnOff]}>
+          <Text style={s.traceBtnText}>−</Text>
+        </Pressable>
+        <Text style={s.zoomVal}>{zoom}×</Text>
+        <Pressable onPress={() => setZoom(z => Math.min(4, z + 1))} style={[s.zoomBtn, zoom >= 4 && s.zoomBtnOff]}>
+          <Text style={s.traceBtnText}>+</Text>
+        </Pressable>
+        {zoom > 1 && <Text style={s.zoomHint}>swipe chart sideways</Text>}
+      </View>
+
+      {/* SVG chart (scrolls sideways when zoomed) */}
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        scrollEnabled={zoom > 1}
+        showsHorizontalScrollIndicator={zoom > 1}
+      >
+      <Svg width={W} height={H}>
+        {/* Tap empty chart area to dismiss booster tooltip */}
+        <Rect x={0} y={0} width={W} height={H} fill="#000" fillOpacity={0.001} onPress={() => setTipIdx(null)} />
         {/* Y grid lines */}
         {yLines.map(v => {
           const y = pyOf(v);
@@ -418,10 +413,14 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
           const cy    = pyOf(cum);
           const color = colorMap[b.squadId] || '#888';
           return (
-            <G key={idx} onPress={() => setTipIdx(tipIdx === idx ? null : idx)}>
-              {/* generous invisible tap target */}
-              <Circle cx={cx} cy={cy} r={11} fill="transparent" />
+            <G key={idx}>
               <Circle cx={cx} cy={cy} r={2.8} fill={color} stroke="white" strokeWidth={1} />
+              {/* generous tap target — near-zero opacity (not 'transparent') so it's hit-testable on iOS/Android */}
+              <Circle
+                cx={cx} cy={cy} r={12}
+                fill="#000" fillOpacity={0.01}
+                onPress={() => setTipIdx(tipIdx === idx ? null : idx)}
+              />
             </G>
           );
         })}
@@ -447,29 +446,8 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
           );
         })()}
 
-        {/* Right-side labels — static mode only */}
-        {labelData.map(({ sq, last, color, me, rawY }) => {
-          const lx        = W - MR + 6;
-          const actualY   = pyOf(last.cumulative);
-          const shortName = sq.squadName.length > 10 ? sq.squadName.slice(0, 9) + '…' : sq.squadName;
-          return (
-            <G key={sq.squadId}>
-              <Line
-                x1={W - MR + 1} x2={lx - 2}
-                y1={actualY}     y2={rawY + 2}
-                stroke={color} strokeWidth={0.7} opacity={0.5}
-              />
-              <SvgText
-                x={lx} y={rawY + 4}
-                fontSize={8.5} fill={color}
-                fontWeight={me ? '700' : '500'}
-              >
-                {shortName} · {last.cumulative}
-              </SvgText>
-            </G>
-          );
-        })}
       </Svg>
+      </ScrollView>
 
       {/* Legend */}
       <View style={s.legend}>
@@ -548,6 +526,25 @@ const s = StyleSheet.create({
   capPillTextActive: {
     color: C.accent,
   },
+  zoomRow: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           8,
+    marginBottom:  spacing.xs,
+  },
+  zoomBtn: {
+    width:           26,
+    height:          22,
+    alignItems:      'center',
+    justifyContent:  'center',
+    borderRadius:    radius.sm,
+    borderWidth:     1,
+    borderColor:     'rgba(201,168,76,0.35)',
+    backgroundColor: 'rgba(201,168,76,0.08)',
+  },
+  zoomBtnOff: { opacity: 0.35 },
+  zoomVal:    { color: C.text, fontSize: 11, fontWeight: '600', minWidth: 20, textAlign: 'center' },
+  zoomHint:   { color: C.muted, fontSize: 9, marginLeft: 4 },
   traceBtns: {
     flexDirection: 'row',
     gap:           6,
