@@ -153,7 +153,13 @@ const styles = StyleSheet.create({
   center: { paddingVertical: spacing.xxl, alignItems: 'center' },
   emptyText: { color: C.muted, fontSize: fontSize.sm, textAlign: 'center' },
 
-  scroll: { maxHeight: 420 },
+  // flex:1 (not a fixed maxHeight) so this reliably gets whatever space
+  // is left inside the sheet's 80%-of-screen cap after the header and the
+  // optional Captain/VC subtitle line — a hardcoded pixel maxHeight here
+  // could exceed that remaining space on shorter screens or when the
+  // subtitle is present, pushing the list mostly out of the scrollable
+  // area and making it feel like it won't scroll.
+  scroll: { flex: 1 },
 
   tableHeaderRow: {
     flexDirection:     'row',
