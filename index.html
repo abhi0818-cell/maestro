@@ -908,6 +908,20 @@
     .hl-perf div { line-height:1.5; }
     .hl-badges { display:flex; flex-wrap:wrap; gap:4px; justify-content:flex-end; max-width:150px; flex-shrink:0; }
     .hl-badge { font-size:9.5px; font-weight:700; color:#8A5A00; background:#FBEFC9; border:1px solid #E9D28F; border-radius:4px; padding:2px 6px; white-space:nowrap; }
+    .hl-tile-card { padding: 14px 20px 16px; }
+    .hl-tile-title { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:10px; }
+    .hl-tile-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+    .hl-tile { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 8px; text-align:center; cursor:pointer; transition:border-color .15s, background .15s; }
+    .hl-tile:hover, .hl-tile:focus-visible { border-color:var(--accent); outline:none; }
+    .hl-tile-active { border-color:#A67C00; background:#FBEFC9; }
+    .hl-tile-icon { font-size:15px; }
+    .hl-tile-num { font-size:20px; font-weight:800; color:var(--text); line-height:1.15; margin-top:2px; }
+    .hl-tile-label { font-size:9.5px; color:var(--muted); font-weight:600; margin-top:2px; }
+    .hl-detail { border-top:1px solid rgba(214,207,168,0.7); }
+    .hl-detail-header { display:flex; align-items:center; justify-content:space-between; padding:10px 20px; font-size:11.5px; font-weight:700; color:var(--text); }
+    .hl-detail-count { font-weight:500; color:var(--muted); }
+    .hl-detail-close { background:none; border:none; font-size:13px; color:var(--muted); cursor:pointer; padding:2px 6px; line-height:1; }
+    .hl-detail-close:hover { color:var(--text); }
 
     #lbViewMeta { font-size: 11px; color: var(--muted); }
     /* Chart panel inside lb-body */
@@ -3476,7 +3490,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     // expandedKeys: stable per-row keys ('sl_<squadId>' / 'daily_<teamId>') that are
     // currently expanded — re-opened automatically after each render so the detail
     // view survives the periodic live-refresh poll.
-    const lbState = { tab: 'daily', profiles: {}, matchId: null, expandedKeys: new Set(), tsExpandedKeys: new Set(), pollTimer: null, view: 'table' };
+    const lbState = { tab: 'daily', profiles: {}, matchId: null, expandedKeys: new Set(), tsExpandedKeys: new Set(), hlActiveTag: null, pollTimer: null, view: 'table' };
     const ROLE_ORDER_LB = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
     async function openLeaderboard() {
@@ -4143,41 +4157,142 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       }
       try {
         const data = await state.db.getSquadHighlights(squadId);
-        el.innerHTML = teamHighlightsHtml(data);
+        renderTeamHighlights(el, data);
       } catch (err) {
         el.innerHTML = `<div class="lb-empty">Highlights unavailable: ${err.message}</div>`;
       }
     }
 
-    /** Render every milestone performance (century, wicket haul, hat-trick,
-     * fielding feat, etc.) as a flat, most-recent-first list — one row per
-     * performance, badges built from the tags getSquadHighlights derived. */
-    function teamHighlightsHtml(data) {
-      if (!data || !data.highlights || !data.highlights.length) {
-        return '<div class="lb-empty">No milestone performances yet — centuries, wicket hauls, and other feats from your XI will show up here.</div>';
+    /** Fixed display order + icon/label for every tag deriveHighlightTags can
+     * produce. A tile only renders when its count is > 0 (e.g. hat-trick only
+     * shows up once someone on the squad actually takes one). */
+    const HIGHLIGHT_TILE_ORDER = ['century', 'half_century', 'duck', 'five_wkt', 'four_wkt', 'three_wkt', 'maiden', 'hattrick', 'three_catches', 'stumping', 'direct_runout', 'indirect_runout'];
+    const HIGHLIGHT_TILE_META = {
+      century:         { icon: '💯', label: 'Centuries' },
+      half_century:    { icon: '🏏', label: 'Half-centuries' },
+      duck:            { icon: '🦆', label: 'Ducks' },
+      five_wkt:        { icon: '🔥', label: '5-wkt hauls' },
+      four_wkt:        { icon: '🎯', label: '4-wkt hauls' },
+      three_wkt:       { icon: '👌', label: '3-wkt hauls' },
+      maiden:          { icon: '0️⃣', label: 'Maidens' },
+      hattrick:        { icon: '🎩', label: 'Hat-tricks' },
+      three_catches:   { icon: '🙌', label: '3-catch games' },
+      stumping:        { icon: '🧤', label: 'Stumpings' },
+      direct_runout:   { icon: '💥', label: 'Run outs' },
+      indirect_runout: { icon: '🤝', label: 'Assists' },
+    };
+
+    /** Tally how many highlight entries carry each tag key, e.g. {century: 2, duck: 3, ...}. */
+    function tallyHighlightTags(highlights) {
+      const counts = {};
+      highlights.forEach(h => h.tags.forEach(t => { counts[t.key] = (counts[t.key] || 0) + 1; }));
+      return counts;
+    }
+
+    /** One milestone-performance row (player, match, formatted stat lines, badges) —
+     * shared by the flat detail list revealed under a tapped tile. */
+    function highlightRowHtml(h) {
+      const oppTeam = h.home_team_id === h.team_id ? h.away_team_id
+        : (h.away_team_id === h.team_id ? h.home_team_id : (h.home_team_id || h.away_team_id));
+      const dateStr = h.played_on
+        ? new Date(h.played_on + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        : '';
+      const lines = [];
+      if (h.batting) { const l = formatBattingLine(h.batting); if (l) lines.push(escapeHtml(l)); }
+      if (h.bowling) { const l = formatBowlingLine(h.bowling); if (l) lines.push(escapeHtml(l)); }
+      if (h.fielding) { const l = formatFieldingLine(h.fielding); if (l) lines.push(escapeHtml(l)); }
+      const perf = lines.map(l => `<div>${l}</div>`).join('');
+      const badges = h.tags.map(t => `<span class="hl-badge">${t.icon} ${escapeHtml(t.label)}</span>`).join('');
+      return `<div class="hl-row">
+          <div class="hl-main">
+            <div class="hl-player">${escapeHtml(h.name)}</div>
+            <div class="hl-match">M${h.match_number ?? '?'} · vs ${escapeHtml(oppTeam || '?')}${dateStr ? ' · ' + dateStr : ''}</div>
+            <div class="hl-perf">${perf}</div>
+          </div>
+          <div class="hl-badges">${badges}</div>
+        </div>`;
+    }
+
+    /** Render Team Highlights as a "Season highlights at a glance" tile grid — one
+     * tile per tag that actually occurred, showing its count. Tapping a tile filters
+     * the full list down to just that category and reveals it below the grid;
+     * tapping the same tile again (or its close button) collapses it. Mirrors
+     * wireTeamStatsExpand's expand/collapse pattern, tracked via lbState.hlActiveTag
+     * so modal and inline views agree on which tile is open. */
+    function renderTeamHighlights(container, data) {
+      const highlights = (data && data.highlights) || [];
+      if (!highlights.length) {
+        container.innerHTML = '<div class="lb-empty">No milestone performances yet — centuries, wicket hauls, and other feats from your XI will show up here.</div>';
+        return;
       }
-      const rows = data.highlights.map(h => {
-        const oppTeam = h.home_team_id === h.team_id ? h.away_team_id
-          : (h.away_team_id === h.team_id ? h.home_team_id : (h.home_team_id || h.away_team_id));
-        const dateStr = h.played_on
-          ? new Date(h.played_on + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-          : '';
-        const lines = [];
-        if (h.batting) { const l = formatBattingLine(h.batting); if (l) lines.push(escapeHtml(l)); }
-        if (h.bowling) { const l = formatBowlingLine(h.bowling); if (l) lines.push(escapeHtml(l)); }
-        if (h.fielding) { const l = formatFieldingLine(h.fielding); if (l) lines.push(escapeHtml(l)); }
-        const perf = lines.map(l => `<div>${l}</div>`).join('');
-        const badges = h.tags.map(t => `<span class="hl-badge">${t.icon} ${escapeHtml(t.label)}</span>`).join('');
-        return `<div class="hl-row">
-            <div class="hl-main">
-              <div class="hl-player">${escapeHtml(h.name)}</div>
-              <div class="hl-match">M${h.match_number ?? '?'} · vs ${escapeHtml(oppTeam || '?')}${dateStr ? ' · ' + dateStr : ''}</div>
-              <div class="hl-perf">${perf}</div>
-            </div>
-            <div class="hl-badges">${badges}</div>
-          </div>`;
-      }).join('');
-      return `<div class="hl-list">${rows}</div>`;
+      const counts = tallyHighlightTags(highlights);
+      const tilesHtml = HIGHLIGHT_TILE_ORDER
+        .filter(key => counts[key] > 0)
+        .map(key => {
+          const meta = HIGHLIGHT_TILE_META[key];
+          return `<div class="hl-tile" data-tag="${key}" role="button" tabindex="0">
+              <div class="hl-tile-icon">${meta.icon}</div>
+              <div class="hl-tile-num">${counts[key]}</div>
+              <div class="hl-tile-label">${escapeHtml(meta.label)}</div>
+            </div>`;
+        }).join('');
+
+      container.innerHTML = `
+        <div class="hl-tile-card">
+          <div class="hl-tile-title">Season highlights at a glance</div>
+          <div class="hl-tile-grid">${tilesHtml}</div>
+        </div>
+        <div class="hl-detail" style="display:none;"></div>`;
+
+      wireHighlightTiles(container, highlights);
+    }
+
+    /** Click/keyboard wiring for renderTeamHighlights' tile grid — filters +
+     * reveals the detail list for the tapped tag, or collapses it on a repeat tap. */
+    function wireHighlightTiles(container, highlights) {
+      const detailEl = container.querySelector('.hl-detail');
+
+      function collapse() {
+        lbState.hlActiveTag = null;
+        detailEl.style.display = 'none';
+        detailEl.innerHTML = '';
+        container.querySelectorAll('.hl-tile').forEach(t => t.classList.remove('hl-tile-active'));
+      }
+
+      function openTag(tag, tileEl) {
+        lbState.hlActiveTag = tag;
+        container.querySelectorAll('.hl-tile').forEach(t => t.classList.toggle('hl-tile-active', t === tileEl));
+        const meta = HIGHLIGHT_TILE_META[tag];
+        const filtered = highlights.filter(h => h.tags.some(t => t.key === tag));
+        const rows = filtered.map(highlightRowHtml).join('');
+        detailEl.innerHTML = `
+          <div class="hl-detail-header">
+            <span>${meta.icon} ${escapeHtml(meta.label)} <span class="hl-detail-count">(${filtered.length})</span></span>
+            <button class="hl-detail-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="hl-list">${rows}</div>`;
+        detailEl.style.display = '';
+        detailEl.querySelector('.hl-detail-close').addEventListener('click', collapse);
+      }
+
+      container.querySelectorAll('.hl-tile').forEach(tileEl => {
+        const tag = tileEl.dataset.tag;
+        const toggle = () => {
+          if (lbState.hlActiveTag === tag) collapse();
+          else openTag(tag, tileEl);
+        };
+        tileEl.addEventListener('click', toggle);
+        tileEl.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+        });
+      });
+
+      // Re-open whichever tile was active before this container was re-rendered.
+      if (lbState.hlActiveTag) {
+        const tileEl = container.querySelector(`.hl-tile[data-tag="${lbState.hlActiveTag}"]`);
+        if (tileEl) openTag(lbState.hlActiveTag, tileEl);
+        else lbState.hlActiveTag = null;
+      }
     }
 
     /** Build and animate the SVG cumulative-points chart inside `container`. */
@@ -13426,7 +13541,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       }
       try {
         const data = await state.db.getSquadHighlights(squadId);
-        el.innerHTML = teamHighlightsHtml(data);
+        renderTeamHighlights(el, data);
         el.dataset.built = contestId;
       } catch (err) {
         el.innerHTML = `<div class="lb-empty">Highlights unavailable: ${err.message}</div>`;
