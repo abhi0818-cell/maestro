@@ -41,6 +41,8 @@ import { getLeaderboardHistory, LeaderboardHistory } from '../lib/leaderboardHis
 import { LeaderboardProgressChart } from '../components/LeaderboardProgressChart';
 import { getSquadTeamStats, SquadTeamStats, TeamStatsPlayer } from '../lib/teamStats';
 import TeamStatsPlayerSheet from '../components/TeamStatsPlayerSheet';
+import { getSquadHighlights, SquadHighlight } from '../lib/teamHighlights';
+import { formatBattingLine, formatBowlingLine, formatFieldingLine } from '../lib/playerHistory';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -649,6 +651,40 @@ function TeamStatsRow({ player, rank, seasonTotal, onPress }: { player: TeamStat
   );
 }
 
+function HighlightRow({ h }: { h: SquadHighlight }) {
+  const oppTeamId = h.homeTeamId === h.teamId ? h.awayTeamId
+    : (h.awayTeamId === h.teamId ? h.homeTeamId : (h.homeTeamId || h.awayTeamId));
+  const dateStr = h.playedOn
+    ? new Date(h.playedOn + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : '';
+
+  const lines: string[] = [];
+  if (h.batting) { const l = formatBattingLine(h.batting); if (l) lines.push(l); }
+  if (h.bowling) { const l = formatBowlingLine(h.bowling); if (l) lines.push(l); }
+  if (h.fielding) { const l = formatFieldingLine(h.fielding); if (l) lines.push(l); }
+
+  return (
+    <View style={styles.hlRow}>
+      <View style={styles.hlMain}>
+        <Text style={styles.hlPlayer}>{h.name}</Text>
+        <Text style={styles.hlMatch}>
+          M{h.matchNumber ?? '?'} · vs {oppTeamId || '?'}{dateStr ? ` · ${dateStr}` : ''}
+        </Text>
+        {lines.map((l, i) => (
+          <Text key={i} style={styles.hlPerfLine}>{l}</Text>
+        ))}
+      </View>
+      <View style={styles.hlBadges}>
+        {h.tags.map(t => (
+          <View key={t.key} style={styles.hlBadge}>
+            <Text style={styles.hlBadgeText}>{t.icon} {t.label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 type Props = BottomTabScreenProps<RootTabParamList, 'Leaderboard'>;
@@ -680,7 +716,7 @@ export default function LeaderboardScreen({ route }: Props) {
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
 
   // ── Progress chart view state ────────────────────────────────────────────────
-  const [viewMode,       setViewMode]       = useState<'table' | 'chart' | 'stats'>('table');
+  const [viewMode,       setViewMode]       = useState<'table' | 'chart' | 'stats' | 'highlights'>('table');
   const [chartHistory,   setChartHistory]   = useState<LeaderboardHistory | null>(null);
   const [chartLoading,   setChartLoading]   = useState(false);
   const [chartError,     setChartError]     = useState<string | null>(null);
@@ -692,6 +728,14 @@ export default function LeaderboardScreen({ route }: Props) {
   const [teamStatsLoading, setTeamStatsLoading]  = useState(false);
   const [teamStatsError,   setTeamStatsError]    = useState<string | null>(null);
   const [statsPlayer,      setStatsPlayer]       = useState<TeamStatsPlayer | null>(null);
+
+  // ── Team Highlights view state — milestone performances (centuries,
+  // wicket hauls, hat-tricks, fielding feats) for this squad's own players
+  // (see app/src/lib/teamHighlights.ts). Same squad-scoped source as Team
+  // Stats above. ──
+  const [highlights,        setHighlights]        = useState<SquadHighlight[] | null>(null);
+  const [highlightsLoading, setHighlightsLoading]  = useState(false);
+  const [highlightsError,   setHighlightsError]    = useState<string | null>(null);
 
   // ── Daily-only state ────────────────────────────────────────────────────────
   // Daily has no persistent squad, so it ranks ONE match at a time (mirrors
@@ -787,6 +831,7 @@ export default function LeaderboardScreen({ route }: Props) {
       setViewMode('table');
       setChartHistory(null);
       setTeamStats(null);
+      setHighlights(null);
     }
   }, [isDailyTab]);
 
@@ -820,6 +865,20 @@ export default function LeaderboardScreen({ route }: Props) {
       .then(s => setTeamStats(s))
       .catch(err => setTeamStatsError(err.message ?? 'Failed to load team stats'))
       .finally(() => setTeamStatsLoading(false));
+  }, [viewMode, activeTab, isDailyTab, myEntry?.squadId]);
+
+  // Fetch Team Highlights when entering highlights mode for an SL/private
+  // tab — same "my squad" resolution as Team Stats above.
+  useEffect(() => {
+    if (viewMode !== 'highlights' || isDailyTab) return;
+    const squadId = myEntry?.squadId;
+    if (!squadId) { setHighlights(null); return; }
+    setHighlightsLoading(true);
+    setHighlightsError(null);
+    getSquadHighlights(squadId)
+      .then(d => setHighlights(d.highlights))
+      .catch(err => setHighlightsError(err.message ?? 'Failed to load highlights'))
+      .finally(() => setHighlightsLoading(false));
   }, [viewMode, activeTab, isDailyTab, myEntry?.squadId]);
   const listLoading = isDailyTab ? dailyLoading : loading;
   // SL and private leagues share the squad/booster/transfer system — daily
@@ -904,6 +963,14 @@ export default function LeaderboardScreen({ route }: Props) {
               📊 Team Stats
             </Text>
           </Pressable>
+          <Pressable
+            style={[styles.viewPill, viewMode === 'highlights' && styles.viewPillActive]}
+            onPress={() => setViewMode('highlights')}
+          >
+            <Text style={[styles.viewPillText, viewMode === 'highlights' && styles.viewPillTextActive]}>
+              🏅 Highlights
+            </Text>
+          </Pressable>
         </View>
       )}
 
@@ -913,6 +980,7 @@ export default function LeaderboardScreen({ route }: Props) {
       {isDailyTab && dailyMatchOptions.length > 0 && (
         <ScrollView
           ref={dailyChipsScrollRef}
+          style={styles.mwTabsScroll}
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.mwTabs}
@@ -980,6 +1048,24 @@ export default function LeaderboardScreen({ route }: Props) {
                 <TeamStatsRow key={p.playerId} player={p} rank={i + 1} seasonTotal={teamStats.seasonTotal} onPress={() => setStatsPlayer(p)} />
               ))}
             </>
+          )}
+        </ScrollView>
+      ) : viewMode === 'highlights' ? (
+        <ScrollView contentContainerStyle={styles.chartScroll} showsVerticalScrollIndicator={false}>
+          {highlightsLoading ? (
+            <View style={styles.spinnerWrap}>
+              <ActivityIndicator size="large" color="#C9A84C" />
+            </View>
+          ) : highlightsError ? (
+            <Text style={styles.empty}>{highlightsError}</Text>
+          ) : !highlights || highlights.length === 0 ? (
+            <Text style={styles.empty}>
+              No milestone performances yet — centuries, wicket hauls, and other feats from your XI will show up here.
+            </Text>
+          ) : (
+            highlights.map((h, i) => (
+              <HighlightRow key={`${h.matchId}_${h.playerId}_${i}`} h={h} />
+            ))
           )}
         </ScrollView>
       ) : (
@@ -1099,6 +1185,7 @@ const styles = StyleSheet.create({
 
   // Contest tabs
   tabsScroll: {
+    flexGrow:          0, // ScrollView defaults to flexGrow:1 — without this the tab strip absorbs free space and pushes the Table/Progress toggle down when content is short
     flexShrink:        0,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(28,31,38,0.1)',
@@ -1306,6 +1393,36 @@ const styles = StyleSheet.create({
   tsShareFill:  { height: '100%', borderRadius: 99, backgroundColor: C.accent },
   tsSharePct:   { color: C.muted, fontSize: 9, marginTop: 2 },
 
+  // Team Highlights — one row per milestone performance (mirrors the ts-row
+  // visual language above: same card shape, border, shadow).
+  hlRow: {
+    flexDirection:   'row',
+    alignItems:      'flex-start',
+    justifyContent:  'space-between',
+    gap:             spacing.sm,
+    padding:         spacing.md,
+    marginBottom:    6,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    borderWidth:     1,
+    borderColor:     C.border,
+    borderRadius:    radius.lg,
+    ...shadow.card,
+  },
+  hlMain:     { flex: 1, gap: 2 },
+  hlPlayer:   { color: C.text, fontSize: fontSize.sm, fontWeight: '700' },
+  hlMatch:    { color: C.muted, fontSize: fontSize.xs, fontWeight: '600' },
+  hlPerfLine: { color: C.text, fontSize: fontSize.xs, marginTop: 2, lineHeight: 16 },
+  hlBadges:   { flexDirection: 'row', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end', maxWidth: 130 },
+  hlBadge: {
+    backgroundColor: '#FBEFC9',
+    borderWidth:     1,
+    borderColor:     '#E9D28F',
+    borderRadius:    radius.sm,
+    paddingHorizontal: 6,
+    paddingVertical:   2,
+  },
+  hlBadgeText: { color: '#8A5A00', fontSize: 9, fontWeight: '700' },
+
   // ── Team Detail Modal ─────────────────────────────────────────────────────
 
   modalRoot: {
@@ -1343,6 +1460,7 @@ const styles = StyleSheet.create({
 
   // Matchweek tabs
   mwTabsScroll: {
+    flexGrow:          0,
     flexShrink:        0,
     maxHeight:         80,
     borderBottomWidth: 1,
