@@ -16,7 +16,7 @@
 
 import React from 'react';
 import {
-  Modal, Pressable, ScrollView, StyleSheet, Text, View,
+  Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View,
 } from 'react-native';
 import { fontSize, radius, spacing } from '../theme';
 import { TeamStatsPlayer } from '../lib/teamStats';
@@ -45,6 +45,19 @@ interface Props {
 export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props) {
   const log = player ? [...player.log].sort((a, b) => (b.matchNumber ?? 0) - (a.matchNumber ?? 0)) : [];
 
+  // A definite pixel height for the ScrollView, computed from the actual
+  // window size, rather than flex:1 (ambiguous — Yoga has no definite main
+  // size to grow against inside a shrink-to-fit, maxHeight-only sheet, and
+  // was collapsing the list to zero height) or a hardcoded pixel maxHeight
+  // (didn't account for the header/subtitle actually rendered, or for
+  // screen size — could exceed the room really left in the sheet's 80% cap
+  // and make the list unscrollable). hasSubtitle tracks whether the
+  // Captain/VC line below the header is present, since it takes real space.
+  const { height: winH } = useWindowDimensions();
+  const hasSubtitle = !!player && (player.timesCaptain > 0 || player.timesVc > 0);
+  const chromeReserve = hasSubtitle ? 180 : 150; // header + padding (+ subtitle line)
+  const scrollMaxHeight = Math.max(220, Math.round(winH * 0.8) - chromeReserve);
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={styles.overlay} onPress={onClose}>
@@ -71,7 +84,7 @@ export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props
               <Text style={styles.emptyText}>No match log yet for this player.</Text>
             </View>
           ) : (
-            <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+            <ScrollView style={[styles.scroll, { maxHeight: scrollMaxHeight }]} showsVerticalScrollIndicator={false}>
               <View style={styles.tableHeaderRow}>
                 <Text style={[styles.th, styles.colMatch]}>Match</Text>
                 <Text style={[styles.th, styles.colPerf]}>Performance</Text>
@@ -153,13 +166,10 @@ const styles = StyleSheet.create({
   center: { paddingVertical: spacing.xxl, alignItems: 'center' },
   emptyText: { color: C.muted, fontSize: fontSize.sm, textAlign: 'center' },
 
-  // flex:1 (not a fixed maxHeight) so this reliably gets whatever space
-  // is left inside the sheet's 80%-of-screen cap after the header and the
-  // optional Captain/VC subtitle line — a hardcoded pixel maxHeight here
-  // could exceed that remaining space on shorter screens or when the
-  // subtitle is present, pushing the list mostly out of the scrollable
-  // area and making it feel like it won't scroll.
-  scroll: { flex: 1 },
+  // Base style only — the actual maxHeight is computed per-render from
+  // the window size (see scrollMaxHeight above) and merged in via the
+  // style array on the ScrollView.
+  scroll: {},
 
   tableHeaderRow: {
     flexDirection:     'row',
