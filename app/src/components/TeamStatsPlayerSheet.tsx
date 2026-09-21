@@ -42,6 +42,12 @@ interface Props {
   onClose: () => void;
 }
 
+// Temporary, visible build marker — bump this string with every fix to
+// this file so a screenshot can confirm at a glance whether a given EAS
+// Update actually reached the device, instead of guessing from behavior
+// alone. Safe to delete once the scroll issue is confirmed fixed.
+const BUILD_MARKER = 'build: ts-fix-7';
+
 export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props) {
   const log = player ? [...player.log].sort((a, b) => (b.matchNumber ?? 0) - (a.matchNumber ?? 0)) : [];
 
@@ -77,6 +83,7 @@ export default function TeamStatsPlayerSheet({ visible, player, onClose }: Props
             <Text style={styles.title} numberOfLines={1}>
               {player?.name ?? ''} — Match log
             </Text>
+            <Text style={styles.buildMarker}>{BUILD_MARKER}</Text>
             <Pressable onPress={onClose} hitSlop={8}>
               <Text style={styles.closeText}>✕</Text>
             </Pressable>
@@ -172,6 +179,7 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   closeText: { color: C.muted, fontSize: fontSize.lg },
+  buildMarker: { color: '#C9A84C', fontSize: 9, marginRight: spacing.sm },
   subtitle:  { color: C.muted, fontSize: fontSize.xs, fontWeight: '600', marginBottom: spacing.md },
 
   center: { paddingVertical: spacing.xxl, alignItems: 'center' },
