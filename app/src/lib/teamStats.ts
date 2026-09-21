@@ -136,6 +136,19 @@ export async function getSquadTeamStats(squadId: string): Promise<SquadTeamStats
   xiRows.forEach((r: any) => {
     byMatchTotals[r.match_id] = (byMatchTotals[r.match_id] || 0) + Number(r.total_points ?? 0);
 
+    // A locked XI persists across every tournament match day regardless of
+    // whether THIS player's real team is playing that day — so
+    // v_match_xi_with_scores has a row for every match date the squad had
+    // them locked in, not just the ones their team actually played. Team
+    // Stats' per-player "matches in XI" count and drilldown log should only
+    // reflect games the player could actually have contributed to, so skip
+    // any row where the player's own team wasn't one of the two teams in
+    // that match for the per-player accumulation below. (matchesPlayed/
+    // seasonTotal stay scoped to the whole squad's match days, same as
+    // byMatchTotals above — a non-playing day already scores 0 there, so
+    // this only fixes the per-player count and log list.)
+    if (r.team_id !== r.home_team_id && r.team_id !== r.away_team_id) return;
+
     if (!byPlayer[r.player_id]) {
       byPlayer[r.player_id] = {
         playerId: r.player_id,

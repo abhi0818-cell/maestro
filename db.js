@@ -5475,6 +5475,18 @@ export function createDb(cfg = {}) {
       const byPlayer = {};
       season.matches.forEach(m => {
         m.players.forEach(p => {
+          // A locked XI persists across every tournament match day regardless
+          // of whether THIS player's real team is playing that day — so
+          // v_match_xi_with_scores has a row for every match date the squad
+          // had them locked in, not just the ones their team actually played.
+          // Team Stats' "matches in XI" count and drilldown log should only
+          // reflect games the player could actually have contributed to, so
+          // skip any row where the player's own team wasn't one of the two
+          // teams in that match. (points_for_team/seasonTotal are unaffected —
+          // a non-playing day already scores 0 — this only fixes the count
+          // and the log list.)
+          if (p.team_id !== m.home_team_id && p.team_id !== m.away_team_id) return;
+
           const rec = (byPlayer[p.player_id] ??= {
             player_id: p.player_id, name: p.player_name, role: p.role, team_id: p.team_id,
             matches_in_xi: 0, points_for_team: 0, times_captain: 0, times_vc: 0, log: [],
